@@ -64,6 +64,9 @@ Trois lectures seulement : boîte, liste des messages (paginée), un message. Au
 |---|---|---|
 | pytest | 9.2.0 | 15 tests : corpus, mot-clé, citations, classifieur simulé, connecteur AgentMail simulé (`uv run pytest -q`) |
 | Ruff | 0.17.6 | lint et formatage, `line-length = 120` (`uv run ruff check .`) |
+| pre-commit | via `uv tool run` | hooks locaux : fichiers, YAML (yamllint), gitleaks, Ruff |
+| gitleaks | 8.30.1 | recherche de secrets : hook pre-commit et job CI sur tout l'historique |
+| GitHub Actions | checkout v7.0.1, setup-uv v10.3.3 | CI : formatage, Ruff, tests, gitleaks (`.github/workflows/ci.yml`) |
 
 ## 6. Données
 

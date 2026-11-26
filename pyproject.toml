@@ -11,6 +11,7 @@ dependencies = [
 
 [tool.uv]
 package = false
+required-version = "==0.13.5"
 
 [dependency-groups]
 dev = [
