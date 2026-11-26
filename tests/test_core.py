@@ -7,7 +7,17 @@ import pytest
 from openai import OpenAI
 
 import core
-from core import EXPECTED, AnalysisError, ServiceError, classify, keyword_matches, load_corpus, locate_quote, score
+from core import (
+    EXPECTED,
+    AnalysisError,
+    PromptError,
+    ServiceError,
+    classify,
+    keyword_matches,
+    load_corpus,
+    locate_quote,
+    score,
+)
 
 
 def test_corpus_has_twenty_ids_with_leading_zeros() -> None:
@@ -103,3 +113,43 @@ def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(core, "get_client", lambda: unreachable)
     with pytest.raises(ServiceError, match="Ollama ne répond pas"):
         classify("a", "b", "m")
+
+
+def test_default_prompts_send_the_same_user_message_as_before(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default template renders exactly the historical JSON payload, even with tricky content."""
+    seen: list = []
+    fake_ollama(monkeypatch, 200, json.dumps({"demande": False, "citation": ""}), seen)
+    subject, body = 'Objet {message} "x"', 'Corps {objet} {id} \\ "q"\nligne é' * 400
+    classify(subject, body, "m")
+    expected = json.dumps({"objet": subject, "message": body[: core.BODY_MAX_CHARS]}, ensure_ascii=False)
+    assert seen[0]["messages"][0]["content"] == core.PROMPT
+    assert seen[0]["messages"][1]["content"] == expected
+
+
+def test_custom_prompts_are_sent_and_only_subject_and_body_are_filled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Edited prompts reach the model; only {objet} and {message} are replaced, once."""
+    seen: list = []
+    fake_ollama(monkeypatch, 200, json.dumps({"demande": False, "citation": ""}), seen)
+    classify("Fête", "Texte avec {objet}", "m", system_prompt="Consigne test", user_template="O={objet} M={message}")
+    assert seen[0]["messages"][0]["content"] == "Consigne test"
+    assert seen[0]["messages"][1]["content"] == 'O="Fête" M="Texte avec {objet}"'
+
+
+@pytest.mark.parametrize(
+    ("system_prompt", "template", "expected"),
+    [
+        ("   ", core.USER_TEMPLATE, "prompt système est vide"),
+        ("Consigne", "Objet : {objet}", "doit contenir {message}"),
+        ("Consigne", "{id} {message}", "non autorisée"),
+        ("Consigne", "{message} {corrige}", "non autorisée"),
+    ],
+)
+def test_unusable_prompts_never_reach_the_model(
+    monkeypatch: pytest.MonkeyPatch, system_prompt: str, template: str, expected: str
+) -> None:
+    """Empty system prompt, missing {message} or unknown placeholder: refused before any HTTP call."""
+    seen: list = []
+    fake_ollama(monkeypatch, 200, json.dumps({"demande": True, "citation": "x"}), seen)
+    with pytest.raises(PromptError, match=expected):
+        classify("a", "b", "m", system_prompt=system_prompt, user_template=template)
+    assert seen == []

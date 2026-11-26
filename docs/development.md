@@ -14,7 +14,7 @@ uv run ruff check . && uv run ruff format --check .
 uv tool run pre-commit run --all-files # all hooks (needs a git repository)
 ```
 
-Arrêter l'application ou libérer le port : [README, section 3.3](../README.md#33-arrêter-lapplication).
+Arrêter l'application ou libérer le port : [README, section 3.4](../README.md#34-arrêter-lapplication).
 
 ## 2. Tests
 
@@ -23,7 +23,7 @@ Arrêter l'application ou libérer le port : [README, section 3.3](../README.md#
 | `tests/test_core.py` | corpus, mot « devis », citation, contenu envoyé au modèle, erreurs Ollama | Ollama simulé |
 | `tests/test_live_inbox.py` | pagination, déduplication, messages envoyés ignorés, expéditeur masqué, erreurs HTTP et réseau, HTML | AgentMail simulé (`httpx.MockTransport`) |
 
-L'interface (`app.py`) n'a pas de test automatique : après une modification, refaire le parcours de [README, section 3.1](../README.md#31-premier-test-sans-agentmail-ni-secret) et vérifier l'onglet en direct (README section 3.2).
+L'interface (`app.py`) n'a pas de test automatique : après une modification, refaire le parcours de [README, section 3.1](../README.md#31-premier-test-sans-agentmail-ni-secret) et vérifier l’onglet en direct (README section 3.3) et le panneau « ⚙ Paramètres » (README section 3.2).
 
 ## 3. Pre-commit
 
@@ -76,4 +76,4 @@ uv tool run pre-commit run gitleaks-history --hook-stage manual  # same scan as 
 | `uv: command not found` dans un terminal neuf | mise pas encore activé | ouvrir un nouveau prompt, ou `mise exec -- uv …` |
 | `lockfile needs to be updated` | `pyproject.toml` modifié | `uv lock`, puis `uv sync --locked` |
 | Onglet en direct : « Configuration AgentMail absente » | lancé sans direnv | `direnv allow`, puis `direnv exec . uv run python app.py` |
-| `Address already in use` | instance déjà lancée | README section 3.3 |
+| `Address already in use` | instance déjà lancée | README section 3.4 |

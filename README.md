@@ -96,7 +96,7 @@ Si Ollama est arrêté : `sudo systemctl start ollama` (ou `ollama serve` dans u
 | `llama3.2:3b` | 4/4 | 5 | 1 | ~12 s |
 | `phi3` | 4/4 | 7 | 3 | ~18 s |
 
-Si `gemma4:e2b` manque sur une autre machine : `ollama pull gemma4:e2b`. Pour imposer un autre modèle par défaut : `OLLAMA_MODEL=nom:tag uv run python app.py` (ou modifier le champ « Modèle local (Ollama) » en haut à droite de l'écran).
+Si `gemma4:e2b` manque sur une autre machine : `ollama pull gemma4:e2b`. Pour imposer un autre modèle par défaut : `OLLAMA_MODEL=nom:tag uv run python app.py` (ou modifier le champ « Modèle local (Ollama) » du panneau « ⚙ Paramètres », en haut à droite de l'écran).
 
 ------
 
@@ -124,11 +124,23 @@ L'écran est une file de travail : à gauche la liste des 20 messages fictifs (N
 
 Le corrigé reste caché jusqu'à l'étape 4 (bouton « 3 · »). Relancer l'étape 2 efface l'ancien score. « Arrêter l’analyse » marque l'analyse comme incomplète, sans score.
 
-### 3.2 Activer l'onglet en direct
+### 3.2 Voir et modifier les prompts (optionnel)
+
+Le bouton **« ⚙ Paramètres »** (en haut à droite) ouvre un panneau latéral avec le champ « Modèle local (Ollama) » et la case **« Afficher et modifier les prompts »**, décochée par défaut : rien n'est projeté tant qu'on ne la coche pas.
+
+- **Prompt système** : les consignes envoyées au modèle avant chaque courriel.
+- **Message utilisateur (gabarit)** : `{objet}` et `{message}` y sont remplacés par l'objet et le corps du courriel, encodés en JSON. Aucune autre variable n'est acceptée : le modèle ne peut jamais recevoir le numéro, le corrigé ni l'expéditeur.
+- Toute modification efface le score et le corrigé affichés ; le badge **« ▲ Prompts modifiés »** reste visible en en-tête, et l'analyse comme le corrigé indiquent que le score a été obtenu avec des prompts modifiés.
+- Un prompt système vide, un gabarit sans `{message}` ou avec une autre variable est refusé avant tout appel au modèle.
+- **« Revenir aux prompts d'origine »** rétablit le texte exact. Les modifications ne valent que pour cette fenêtre : rien n'est enregistré, un rechargement de la page rétablit les prompts d'origine.
+
+Exemple pour la salle : remplacer « Exclure offres de fournisseurs, suivi de location déjà conclue, annulations et SAV. » par « Toute question posée au loueur compte comme une demande. » donne 7 rappels dont 3 fausses alertes (09, 15, 19) au lieu de 4/4 : le prompt fait la règle.
+
+### 3.3 Activer l'onglet en direct
 
 Quand le premier test fonctionne, configure la boîte dédiée en suivant **[docs/AGENTMAIL.md](docs/AGENTMAIL.md)** (création de la boîte, secrets dans `pass` exportés par `.envrc` via direnv, test de connexion, premier message).
 
-### 3.3 Arrêter l'application
+### 3.4 Arrêter l'application
 
 Dans le terminal où tourne `uv run python app.py`, appuie sur **`Ctrl+C`**. Le terminal reprend la main ; la page du navigateur ne répond plus.
 
@@ -195,11 +207,11 @@ Les messages relevés en direct sont perdus à l'arrêt (ils restent dans AgentM
 | Symptôme à l'écran | Cause | Action |
 |---|---|---|
 | « Ollama ne répond pas sur 127.0.0.1:11434 » | service arrêté | `sudo systemctl start ollama`, puis relance l'étape 2 |
-| « Modèle « … » introuvable dans Ollama » | nom mal saisi | remets `gemma4:e2b` dans le champ « Modèle local (Ollama) » en haut à droite ; vérifie `ollama list` |
+| « Modèle « … » introuvable dans Ollama » | nom mal saisi | remets `gemma4:e2b` dans le champ « Modèle local (Ollama) » du panneau « ⚙ Paramètres » ; vérifie `ollama list` |
 | Analyse lente (> 20 s) | modèle déchargé, ou autre modèle occupant la carte | attends le premier passage ; `ollama ps` puis `ollama stop <autre-modèle>` |
 | Ligne « ⚠️ À vérifier : citation introuvable » | le modèle a cité une phrase absente du courriel | c'est une erreur d'analyse, comptée comme non retenue ; le dire au public |
 | « Analyse interrompue » / « Analyse arrêtée » | échec ou clic sur Arrêter | aucun score n'est gardé ; relance l'étape 2 |
-| `Address already in use` au lancement | une autre instance tourne déjà | arrête-la (section 3.3), ou `GRADIO_SERVER_PORT=7861 uv run python app.py` et ouvre http://127.0.0.1:7861 |
+| `Address already in use` au lancement | une autre instance tourne déjà | arrête-la (section 3.4), ou `GRADIO_SERVER_PORT=7861 uv run python app.py` et ouvre http://127.0.0.1:7861 |
 | `uv sync --locked` échoue (« lockfile needs to be updated ») | `pyproject.toml` modifié à la main | `uv lock`, puis `uv sync --locked` |
 | Problèmes AgentMail | voir le tableau de diagnostic | [docs/AGENTMAIL.md](docs/AGENTMAIL.md#7-diagnostic) |
 
@@ -221,6 +233,6 @@ Tests automatiques (corpus, mot-clé, citations, connecteur AgentMail simulé) :
 | `.pre-commit-config.yaml` · `.yamllint.yaml` | contrôles avant commit (fichiers, YAML, clés privées, scripts shell, secrets avec gitleaks, Ruff de `uv.lock`) |
 | `.github/workflows/ci.yml` | CI GitHub : formatage, qualité (Ruff), tests, recherche de secrets (gitleaks) |
 | `LICENSE` | licence MIT |
-| `docs/adr/` | décisions d'architecture (ADR 0001 à 0009), index dans `docs/adr/README.md` |
+| `docs/adr/` | décisions d'architecture (ADR 0001 à 0010), index dans `docs/adr/README.md` |
 
 Inspiration : https://docs.redhat.com/en/learn/ai-quickstarts/rh-helpdesk-email-triage

@@ -21,4 +21,4 @@ Gradio 6.32.0, lancé avec `server_name="127.0.0.1"`, `share=False`, port `GRADI
 
 - Seul ce portable peut ouvrir http://127.0.0.1:7860 ; le public ne fait qu'envoyer des courriels.
 - Un seul processus : l'arrêter vide la liste des messages relevés (ils restent dans AgentMail).
-- Arrêt et libération du port : [README, section 3.3](../../README.md#33-arrêter-lapplication).
+- Arrêt et libération du port : [README, section 3.4](../../README.md#34-arrêter-lapplication).

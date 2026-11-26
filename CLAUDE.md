@@ -26,7 +26,7 @@ core.py           # corpus, « devis » keyword baseline, shared Ollama classifi
 live_inbox.py     # read-only AgentMail client (3 GETs), dedup by message_id, French errors
 messages.csv      # 20 fictional emails (id;objet;message) — do not edit; answer key 02, 07, 13, 17
 tests/            # pytest for core.py and live_inbox.py
-docs/             # AGENTMAIL.md, STACK.md, architecture.md, development.md, adr/ (0001-0009)
+docs/             # AGENTMAIL.md, STACK.md, architecture.md, development.md, adr/ (0001-0010)
 ```
 
 ## Rules that must not regress
@@ -37,7 +37,8 @@ docs/             # AGENTMAIL.md, STACK.md, architecture.md, development.md, adr
 - The answer key stays hidden until « 3 · Révéler le corrigé »; a score exists only for a complete 20-email run; a new run clears the old score.
 - AgentMail is **read-only**, dedicated AI Coffee inbox only (never Scout's). Email content is untrusted: escape it, show plain text, never show the sender.
 - Gradio binds to `127.0.0.1` with `share=False`. Fonts are system fonts: the prepared demo must work offline.
-- Changing the prompt or the model requires re-running the 20 emails: reference result is 4/4 found, 0 false alarm with `gemma4:e2b`.
+- Prompts can be edited per browser session from « ⚙ Paramètres » (never saved, only {objet}/{message} placeholders, see ADR 0010); `core.PROMPT` and `core.USER_TEMPLATE` stay the validated defaults.
+- Changing the default prompt or the model requires re-running the 20 emails: reference result is 4/4 found, 0 false alarm with `gemma4:e2b`.
 
 ## Code Style
 

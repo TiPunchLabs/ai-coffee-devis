@@ -31,7 +31,7 @@
 ## 3. Flux d'une analyse
 
 1. `app.run_analysis` parcourt les 20 messages et appelle `core.classify(objet, corps, modèle)` pour chacun.
-2. `classify` envoie à Ollama, via le client `openai`, `{"objet", "message"}` seulement, avec un schéma JSON imposé (`demande`, `citation`).
+2. `classify` envoie à Ollama, via le client `openai`, le prompt système et le message utilisateur construit à partir du gabarit (par défaut `{"objet": …, "message": …}`), avec un schéma JSON imposé (`demande`, `citation`). Les prompts viennent du panneau « ⚙ Paramètres » (session du navigateur) ou, par défaut, de `core.PROMPT` et `core.USER_TEMPLATE` ; `check_prompts` refuse toute variable autre que `{objet}` et `{message}` avant l'appel.
 3. Si `demande` est vrai, `locate_quote` doit retrouver la citation mot pour mot dans le courriel ; sinon le message passe « À vérifier ».
 4. Chaque résultat met à jour la liste en direct (générateur Gradio). Le score n'est conservé que si les 20 messages ont été traités.
 5. « 3 · Révéler le corrigé » compare le mot-clé et le modèle au corrigé ; une nouvelle analyse efface l'ancien score.

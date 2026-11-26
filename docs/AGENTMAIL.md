@@ -80,7 +80,7 @@ echo "$AGENTMAIL_INBOX_ID"
 
 > 🔐 **Sécurité** : aucune valeur secrète dans le projet ; `.envrc` ne contient que les noms des entrées `pass`. Ne colle jamais la clé dans une conversation, une capture d'écran ou une diapositive. L'application ne l'affiche nulle part ; le test ci-dessous écrit seulement « présente (masquée) ».
 
-> ⚠️ **Warning** : l'application lit ces variables **au démarrage**. Lance toujours `uv run python app.py` depuis un terminal ouvert dans le projet (direnv chargé). Après une correction dans `pass`, refais `direnv reload`, puis redémarre l'application (`Ctrl+C`, puis `uv run python app.py` ; si le terminal d'origine est fermé, voir [README, section 3.3](../README.md#33-arrêter-lapplication)). La démo préparée fonctionne même si `pass` ou direnv ne fournissent rien.
+> ⚠️ **Warning** : l'application lit ces variables **au démarrage**. Lance toujours `uv run python app.py` depuis un terminal ouvert dans le projet (direnv chargé). Après une correction dans `pass`, refais `direnv reload`, puis redémarre l'application (`Ctrl+C`, puis `uv run python app.py` ; si le terminal d'origine est fermé, voir [README, section 3.4](../README.md#34-arrêter-lapplication)). La démo préparée fonctionne même si `pass` ou direnv ne fournissent rien.
 
 ## 4. Test de connexion (sans Gradio)
 
