@@ -34,7 +34,33 @@ uv tool run pre-commit run --all-files
 
 Les hooks Ruff appellent `uv run ruff` : ils utilisent la version verrouillée dans `uv.lock` (0.17.6), la même que la commande manuelle.
 
-## 4. Conventions
+Le hook **gitleaks** (v8.30.1) analyse les modifications indexées à chaque commit et refuse le commit si un secret est détecté (clé d'API, jeton, clé privée). Ce hook ne regarde que l'index : `--all-files` n'y change rien. Pour analyser **tout l'historique** en local, avec la même commande que le job CI `secrets` :
+
+```bash
+uv tool run pre-commit run gitleaks-history --hook-stage manual   # gitleaks git --redact --verbose .
+```
+
+## 4. Intégration continue (GitHub Actions)
+
+Fichier : `.github/workflows/ci.yml`, déclenché à chaque push sur `main` et à chaque pull request vers `main`.
+
+| Job | Étapes | Échoue si |
+|---|---|---|
+| `quality` | `uv sync --locked`, `ruff format --check --diff`, `ruff check`, `pytest -q`, hooks pre-commit (sauf gitleaks et Ruff, déjà couverts) | `uv.lock` périmé, code mal formaté, erreur Ruff, test en échec, YAML invalide, clé privée, fin de ligne |
+| `secrets` | gitleaks v8.30.1 (somme SHA-256 vérifiée), analyse de **tout l'historique** git | un secret est trouvé dans n'importe quel commit |
+
+Les actions sont figées par empreinte de commit (`actions/checkout` v7.0.1, `astral-sh/setup-uv` v10.3.3), les pull requests annulent leurs anciennes exécutions mais jamais celles de `main`, et uv est en 0.13.5 : la version est imposée par `required-version` dans `pyproject.toml`, que setup-uv lit en CI et que uv vérifie en local (un uv d'une autre version refuse de travailler sur le projet). Permissions minimales : `contents: read`. Les tests n'ont pas besoin d'Ollama ni d'AgentMail (simulés).
+
+Reproduire la CI en local :
+
+```bash
+uv sync --locked
+uv run ruff format --check --diff . && uv run ruff check . && uv run pytest -q
+uv tool run pre-commit run --all-files                            # hooks run by the quality job
+uv tool run pre-commit run gitleaks-history --hook-stage manual  # same scan as the secrets job
+```
+
+## 5. Conventions
 
 - Textes visibles en **français** ; code, identifiants et commentaires en anglais.
 - Annotations de type partout, docstring sur chaque fonction, Ruff `line-length = 120`.
@@ -43,7 +69,7 @@ Les hooks Ruff appellent `uv run ruff` : ils utilisent la version verrouillée d
 - Toute décision structurante → nouvel ADR dans `docs/adr/`.
 - Pas de commit automatique ; messages au format Conventional Commits.
 
-## 5. Dépannage développeur
+## 6. Dépannage développeur
 
 | Symptôme | Cause | Action |
 |---|---|---|

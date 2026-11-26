@@ -218,7 +218,8 @@ Tests automatiques (corpus, mot-clé, citations, connecteur AgentMail simulé) :
 | `docs/STACK.md` | technologies utilisées, versions, rôle et raison du choix |
 | `docs/architecture.md` · `docs/development.md` | modules et flux · commandes, tests et conventions de développement |
 | `CLAUDE.md` | consignes pour les agents de code (règles à ne pas casser) |
-| `.pre-commit-config.yaml` | contrôles avant commit (fichiers, YAML, clés privées, Ruff de `uv.lock`) |
+| `.pre-commit-config.yaml` · `.yamllint.yaml` | contrôles avant commit (fichiers, YAML, clés privées, scripts shell, secrets avec gitleaks, Ruff de `uv.lock`) |
+| `.github/workflows/ci.yml` | CI GitHub : formatage, qualité (Ruff), tests, recherche de secrets (gitleaks) |
 | `LICENSE` | licence MIT |
 | `docs/adr/` | décisions d'architecture (ADR 0001 à 0008), index dans `docs/adr/README.md` |
 
