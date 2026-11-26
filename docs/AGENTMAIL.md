@@ -137,6 +137,8 @@ Objet : Devis D-402 : changement de date
 Bonjour, pour le devis D-402 déjà signé, pouvez-vous décaler la livraison des chapiteaux du 5 au 6 décembre ? Le reste ne change pas.
 ```
 
+D'autres courriels prêts à envoyer (fournisseur, consigne cachée, simple question sur une réservation) : [mails_exemple.md](mails_exemple.md).
+
 Ne copie que le contenu des blocs `text` : le verdict attendu et tout commentaire restent hors du courriel, sinon ils sont envoyés au modèle comme texte du client.
 
 Lors de la répétition du 26/11/2026 (appel direct du classifieur, `gemma4:e2b`) : A → nouvelle demande (extrait : « Auriez-vous 80 chaises blanches et deux tentes de 6 mètres ? »), B → hors périmètre, C → modification (extrait : « pour le devis D-402 déjà signé, pouvez-vous décaler la livraison des chapiteaux du 5 au 6 décembre ? »).

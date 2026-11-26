@@ -233,6 +233,7 @@ Tests automatiques (corpus, mot-clé, citations, connecteur AgentMail simulé) :
 | `messages.csv` | les 20 courriels fictifs (corrigé : 02, 07, 13, 17) |
 | `.envrc` | exporte `AGENTMAIL_API_KEY` et `AGENTMAIL_INBOX_ID` depuis `pass` (direnv), sans secret dans le fichier |
 | `docs/AGENTMAIL.md` | configuration et test de la boîte dédiée |
+| `docs/mails_exemple.md` | 5 courriels fictifs prêts à envoyer (blocs à copier) avec intention attendue et résultat observé |
 | `docs/STACK.md` | technologies utilisées, versions, rôle et raison du choix |
 | `docs/architecture.md` · `docs/development.md` | modules et flux · commandes, tests et conventions de développement |
 | `CLAUDE.md` | consignes pour les agents de code (règles à ne pas casser) |
