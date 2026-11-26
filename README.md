@@ -118,9 +118,15 @@ Dans l'onglet **« Démo préparée »** :
 L'écran est une file de travail : à gauche la liste des 20 messages fictifs (Nº 01 à 20, objet, statut), à droite le détail du message sélectionné. Clique une ligne (ou `Tab` puis `Entrée`) pour l'ouvrir ; sur téléphone, le détail défile sous la liste et un lien « ← Retour à la liste » permet de remonter.
 
 1. Clique **« 1 · Chercher le mot « devis » »** : les lignes 03, 07, 12, 18 reçoivent l'étiquette « « devis » » et l'en-tête de la liste affiche « 4 contiennent « devis » ».
-2. Clique **« 2 · Analyser les 20 messages »** : la progression `n/20` défile et chaque ligne prend son statut. Résultat de la répétition : 02, 07, 13, 17 en ambre **« ● À rappeler »** (« 4 à rappeler » en tête de liste), les autres « Pas une demande ».
-3. Clique une ligne « À rappeler » : le détail commence par **« Ce que demande le client »** (la phrase citée par le modèle), puis la prochaine étape, puis le courriel d'origine avec cette phrase surlignée.
-4. Clique **« 3 · Révéler le corrigé »** : un panneau compare les méthodes (mot « devis » = 1/4 retrouvée, 3 fausses alertes, 3 manquées ; modèle local = résultat réel de ton analyse) et chaque ligne indique « ✓ Bonne détection », « ✓ Bien écarté », « ✗ Fausse alerte » ou « ✗ Demande manquée ».
+2. Clique **« 2 · Analyser les 20 messages »** : la progression `n/20` défile et chaque ligne prend son statut parmi trois intentions :
+   - **« ● Nouvelle demande de location »** (ambre) : le client veut louer ; seule catégorie comptée comme nouvelle demande et dans le score ;
+   - **« ◆ Modification de location »** (ambre) : le client veut changer une location confirmée ou un devis accepté (date, horaire, lieu, matériel, quantité) ;
+   - **« Hors périmètre »** : ni l'un ni l'autre (fournisseur, annulation complète, SAV, simple question sur une réservation…) ;
+   - **« ▲ Analyse à vérifier »** : réponse du modèle rejetée (JSON invalide, champs contradictoires, citation absente du courriel), jamais comptée comme classée.
+
+   L'en-tête de liste affiche « N à traiter » (nouvelles demandes + modifications) et « M nouvelle(s) demande(s) de location ». Résultat de la répétition du 26/11/2026 : 02, 07, 13, 17 en « Nouvelle demande de location », les 16 autres « Hors périmètre » (4 à traiter, 4 nouvelles demandes).
+3. Clique une ligne ambre : le détail commence par **« Ce que demande le client »** (l'intention et l'extrait cité par le modèle, vérifié dans le courriel), puis la **prochaine étape suggérée** (« Vérifier la disponibilité du matériel et préparer une réponse. » ou « Vérifier si la modification est possible et répondre au client. »), puis le courriel d'origine, intact, avec l'extrait surligné. L'application ne répond à personne et ne modifie aucune réservation.
+4. Clique **« 3 · Révéler le corrigé »** : un panneau compare les méthodes (mot « devis » = 1/4 retrouvée, 3 fausses alertes, 3 manquées ; modèle local = résultat réel de ton analyse) et chaque ligne indique « ✓ Bonne détection », « ✓ Bien écarté », « ✗ Fausse alerte », « ✗ Demande manquée » ou « Modification de location (hors score) ».
 
 Le corrigé reste caché jusqu'à l'étape 4 (bouton « 3 · »). Relancer l'étape 2 efface l'ancien score. « Arrêter l’analyse » marque l'analyse comme incomplète, sans score.
 
@@ -134,7 +140,7 @@ Le bouton **« ⚙ Paramètres »** (en haut à droite) ouvre un panneau latéra
 - Un prompt système vide, un gabarit sans `{message}` ou avec une autre variable est refusé avant tout appel au modèle.
 - **« Revenir aux prompts d'origine »** rétablit le texte exact. Les modifications ne valent que pour cette fenêtre : rien n'est enregistré, un rechargement de la page rétablit les prompts d'origine.
 
-Exemple pour la salle : remplacer « Exclure offres de fournisseurs, suivi de location déjà conclue, annulations et SAV. » par « Toute question posée au loueur compte comme une demande. » donne 7 rappels dont 3 fausses alertes (09, 15, 19) au lieu de 4/4 : le prompt fait la règle.
+Exemple pour la salle : dans la catégorie « autre », remplacer la phrase « Cette catégorie comprend les offres de fournisseurs, … qui ne demandent aucun changement. » par « Toute question posée au loueur relève de "nouvelle_location". » donne 6 nouvelles demandes dont 2 fausses alertes (12, 18) et 2 modifications (08, 19) au lieu de 4/4 (mesuré le 26/11/2026) : le prompt fait la règle.
 
 ### 3.3 Activer l'onglet en direct
 
@@ -191,7 +197,7 @@ Les messages relevés en direct sont perdus à l'arrêt (ils restent dans AgentM
 | 0:00 | Onglet « Démo préparée », écran vierge | « Imaginez : vous louez du matériel événementiel en Guadeloupe. Un client écrit : *il nous faudrait 40 chaises pour samedi à Sainte-Anne, vous livrez ?* Un autre : *je viens de payer le solde du devis accepté en octobre.* Lequel faut-il rappeler pour une nouvelle location ? Et quels mots le prouvent ? » |
 | 0:40 | Montre la liste des 20 messages, puis **« 1 · Chercher le mot « devis » »** | « La méthode classique : chercher le mot devis. Quatre résultats. Lesquels appellent vraiment une proposition ? » (03 dossier classé, 12 déjà payé, 18 un garage.) |
 | 1:20 | **« 2 · Analyser les 20 messages »** | « Maintenant un modèle d'IA qui tourne sur ce portable, sans Internet. » Pendant le calcul : « 02 et 08 parlent tous deux de livraison. Lequel cherche encore à louer ? » |
-| 1:50 | Clique une ligne ambre « À rappeler » (02, par exemple) | Lis « Ce que demande le client », puis montre la même phrase surlignée dans le courriel d'origine : « Chaque suggestion doit citer une phrase exacte, vérifiée par le programme. » |
+| 1:50 | Clique une ligne ambre « Nouvelle demande de location » (02, par exemple) | Lis « Ce que demande le client », puis montre la même phrase surlignée dans le courriel d'origine : « Chaque suggestion doit citer une phrase exacte, vérifiée par le programme. » |
 | 2:20 | **« 3 · Révéler le corrigé »** | Compare les deux lignes du tableau (et les marques ✓/✗ de la liste) : demandes retrouvées, fausses alertes, demandes manquées. Si le modèle s'est trompé : « Quelle phrase a pu l'induire en erreur ? » |
 | 2:50 | Onglet **« En direct avec AgentMail »** | **Invite le public** : « À vous. Écrivez un message fictif à cette adresse, sans signature. Une demande de location… ou un piège. » Laisse l'adresse à l'écran 30 à 45 s. |
 | 3:40 | **« Relever les nouveaux messages »**, puis clique un message dans la liste | Il s'affiche à droite (objet et texte, jamais l'expéditeur) : lis-le. Réessaie après 20 s si « Aucun nouveau message ». |
@@ -233,6 +239,6 @@ Tests automatiques (corpus, mot-clé, citations, connecteur AgentMail simulé) :
 | `.pre-commit-config.yaml` · `.yamllint.yaml` | contrôles avant commit (fichiers, YAML, clés privées, scripts shell, secrets avec gitleaks, Ruff de `uv.lock`) |
 | `.github/workflows/ci.yml` | CI GitHub : formatage, qualité (Ruff), tests, recherche de secrets (gitleaks) |
 | `LICENSE` | licence MIT |
-| `docs/adr/` | décisions d'architecture (ADR 0001 à 0010), index dans `docs/adr/README.md` |
+| `docs/adr/` | décisions d'architecture (ADR 0001 à 0011), index dans `docs/adr/README.md` |
 
 Inspiration : https://docs.redhat.com/en/learn/ai-quickstarts/rh-helpdesk-email-triage
