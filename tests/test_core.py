@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+from openai import OpenAI
 
 import core
 from core import EXPECTED, AnalysisError, ServiceError, classify, keyword_matches, load_corpus, locate_quote, score
@@ -33,25 +34,46 @@ def test_locate_quote_tolerates_apostrophes_but_rejects_inventions() -> None:
 
 
 def fake_ollama(monkeypatch: pytest.MonkeyPatch, status: int, content: str, seen: list) -> None:
-    """Replace httpx.post with a canned Ollama answer and record the payload."""
+    """Serve a canned answer from Ollama's OpenAI-compatible API and record each request body."""
 
-    def post(url: str, json: dict, timeout: float) -> httpx.Response:
-        seen.append(json)
-        body = {"message": {"content": content}} if status == 200 else {"error": "model not found"}
-        return httpx.Response(status, json=body)
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        seen.append(json.loads(request.content))
+        if status != 200:
+            return httpx.Response(status, json={"error": {"message": "model not found"}})
+        message = {"role": "assistant", "content": content}
+        return httpx.Response(
+            200,
+            json={
+                "id": "x",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "m",
+                "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            },
+        )
 
-    monkeypatch.setattr(core.httpx, "post", post)
+    client = OpenAI(
+        base_url="http://ollama.test/v1",
+        api_key="ollama",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(core, "get_client", lambda: client)
 
 
 def test_classify_sends_only_subject_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No identifier or answer key reaches the model; a valid quote is returned verbatim."""
+    """No identifier or answer key reaches the model; settings match the demo; quote returned verbatim."""
     seen: list = []
     fake_ollama(monkeypatch, 200, json.dumps({"demande": True, "citation": "40 chaises"}), seen)
     verdict = classify("Notre fête", "Il nous faudrait 40 chaises samedi.", "m")
     assert verdict.is_request and verdict.quote == "40 chaises"
-    user = json.loads(seen[0]["messages"][1]["content"])
+    sent = seen[0]
+    user = json.loads(sent["messages"][1]["content"])
     assert set(user) == {"objet", "message"}
-    assert "02" not in json.dumps(seen[0]["messages"])
+    assert "02" not in json.dumps(sent["messages"])
+    assert (sent["temperature"], sent["reasoning_effort"], sent["keep_alive"]) == (0, "none", "30m")
+    assert sent["response_format"]["json_schema"]["schema"] == core.SCHEMA
 
 
 def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,6 +81,9 @@ def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_ollama(monkeypatch, 404, "", [])
     with pytest.raises(ServiceError, match="introuvable"):
         classify("a", "b", "inconnu:1b")
+    fake_ollama(monkeypatch, 500, "", [])
+    with pytest.raises(ServiceError, match="HTTP 500"):
+        classify("a", "b", "m")
     fake_ollama(monkeypatch, 200, "pas du json", [])
     with pytest.raises(AnalysisError, match="illisible"):
         classify("a", "b", "m")
@@ -66,9 +91,15 @@ def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(AnalysisError, match="citation"):
         classify("a", "b", "m")
 
-    def down(*args: object, **kwargs: object) -> None:
+    def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(core.httpx, "post", down)
+    unreachable = OpenAI(
+        base_url="http://ollama.test/v1",
+        api_key="ollama",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(down)),
+    )
+    monkeypatch.setattr(core, "get_client", lambda: unreachable)
     with pytest.raises(ServiceError, match="Ollama ne répond pas"):
         classify("a", "b", "m")

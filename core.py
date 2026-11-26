@@ -9,7 +9,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
+import openai
+from openai import OpenAI
 
 ROOT = Path(__file__).resolve().parent
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -89,6 +90,11 @@ def locate_quote(quote: str, subject: str, body: str) -> str | None:
     return None
 
 
+def get_client() -> OpenAI:
+    """OpenAI client pointed at Ollama's OpenAI-compatible API (local, no real key needed)."""
+    return OpenAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama", timeout=180, max_retries=0)
+
+
 def classify(subject: str, body: str, model: str) -> Verdict:
     """Classify one email with the local Ollama model. Shared by both tabs.
 
@@ -98,41 +104,34 @@ def classify(subject: str, body: str, model: str) -> Verdict:
     model = model.strip()
     if not model:
         raise ServiceError("Aucun modèle indiqué. Saisis un nom affiché par `ollama list`.")
-    payload = {
-        "model": model,
-        "stream": False,
-        "think": False,
-        "keep_alive": "30m",
-        "format": SCHEMA,
-        "options": {"temperature": 0},
-        "messages": [
-            {"role": "system", "content": PROMPT},
-            {
-                "role": "user",
-                "content": json.dumps({"objet": subject, "message": body[:BODY_MAX_CHARS]}, ensure_ascii=False),
-            },
-        ],
-    }
+    email = json.dumps({"objet": subject, "message": body[:BODY_MAX_CHARS]}, ensure_ascii=False)
     try:
-        response = httpx.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=180)
-    except httpx.ConnectError as err:
+        completion = get_client().chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": PROMPT}, {"role": "user", "content": email}],
+            temperature=0,
+            reasoning_effort="none",
+            response_format={"type": "json_schema", "json_schema": {"name": "verdict", "schema": SCHEMA}},
+            extra_body={"keep_alive": "30m"},  # Ollama extension: keep the model loaded for the demo
+        )
+    except openai.APITimeoutError as err:
+        raise ServiceError("Ollama n’a pas répondu en 3 minutes. Vérifie `ollama ps` puis relance.") from err
+    except openai.APIConnectionError as err:
         raise ServiceError(
             "Ollama ne répond pas sur 127.0.0.1:11434. Lance `sudo systemctl start ollama` "
             "(ou `ollama serve`) puis relance."
         ) from err
-    except httpx.TimeoutException as err:
-        raise ServiceError("Ollama n’a pas répondu en 3 minutes. Vérifie `ollama ps` puis relance.") from err
-    except httpx.HTTPError as err:
+    except openai.NotFoundError as err:
+        raise ServiceError(f"Modèle « {model} » introuvable dans Ollama. Choisis un nom de `ollama list`.") from err
+    except openai.APIStatusError as err:
+        raise ServiceError(f"Ollama a refusé la requête (HTTP {err.status_code}). Vérifie le modèle.") from err
+    except openai.OpenAIError as err:
         raise ServiceError(f"Échange avec Ollama impossible ({type(err).__name__}). Relance.") from err
-    if response.status_code == 404:
-        raise ServiceError(f"Modèle « {model} » introuvable dans Ollama. Choisis un nom de `ollama list`.")
-    if response.status_code != 200:
-        raise ServiceError(f"Ollama a refusé la requête (HTTP {response.status_code}). Vérifie le modèle.")
     try:
-        result = json.loads(response.json()["message"]["content"])
+        result = json.loads(completion.choices[0].message.content or "")
         is_request = result["demande"]
         quote = result.get("citation", "")
-    except (ValueError, KeyError, TypeError) as err:
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError) as err:
         raise AnalysisError("réponse illisible du modèle") from err
     if not isinstance(is_request, bool):
         raise AnalysisError("réponse illisible du modèle")

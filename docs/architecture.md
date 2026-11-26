@@ -9,7 +9,7 @@
  navigateur ───► │ app.py (Gradio)                                                               │
                  │   ├─ onglet « Démo préparée » ──► core.load_corpus()  ◄── messages.csv         │
                  │   │                               core.keyword_matches()                      │
-                 │   │                               core.classify() ──► Ollama :11434 (local)   │
+                 │   │                               core.classify() ──► Ollama :11434/v1 (local) │
                  │   │                               core.score() (corrigé, jamais envoyé)       │
                  │   └─ onglet « En direct » ──► live_inbox.Mailbox.fetch() ──┐                   │
                  │                               core.classify() (le même)    │                   │
@@ -24,14 +24,14 @@
 | Fichier | Rôle | Dépend de |
 |---|---|---|
 | `app.py` | Interface : barre d'actions, liste (file de travail) à gauche, détail à droite ; état par session (`gr.State`) | `core`, `live_inbox`, Gradio |
-| `core.py` | Corpus, recherche du mot « devis », classifieur Ollama partagé, vérification de la citation, score | httpx |
+| `core.py` | Corpus, recherche du mot « devis », classifieur Ollama partagé, vérification de la citation, score | openai (API compatible OpenAI d'Ollama) |
 | `live_inbox.py` | Lecture seule d'AgentMail (boîte, liste paginée, message), déduplication par `message_id`, erreurs en français | httpx |
 | `messages.csv` | 20 courriels fictifs ; le corrigé (02, 07, 13, 17) est fixé dans `core.py` | — |
 
 ## 3. Flux d'une analyse
 
 1. `app.run_analysis` parcourt les 20 messages et appelle `core.classify(objet, corps, modèle)` pour chacun.
-2. `classify` envoie à Ollama `{"objet", "message"}` seulement, avec un schéma JSON imposé (`demande`, `citation`).
+2. `classify` envoie à Ollama, via le client `openai`, `{"objet", "message"}` seulement, avec un schéma JSON imposé (`demande`, `citation`).
 3. Si `demande` est vrai, `locate_quote` doit retrouver la citation mot pour mot dans le courriel ; sinon le message passe « À vérifier ».
 4. Chaque résultat met à jour la liste en direct (générateur Gradio). Le score n'est conservé que si les 20 messages ont été traités.
 5. « 3 · Révéler le corrigé » compare le mot-clé et le modèle au corrigé ; une nouvelle analyse efface l'ancien score.
