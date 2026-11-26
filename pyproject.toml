@@ -1,0 +1,25 @@
+[project]
+name = "ai-coffee-devis"
+version = "0.2.0"
+description = "Démo AI Coffee : repérer les demandes de location dans une boîte mail avec un modèle local (Ollama)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "gradio>=6.32.0",
+    "httpx>=0.28.1",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.6",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
