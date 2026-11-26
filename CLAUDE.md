@@ -26,7 +26,7 @@ core.py           # corpus, « devis » keyword baseline, shared Ollama classifi
 live_inbox.py     # read-only AgentMail client (3 GETs), dedup by message_id, French errors
 messages.csv      # 20 fictional emails (id;objet;message) — do not edit; answer key 02, 07, 13, 17
 tests/            # pytest for core.py and live_inbox.py
-docs/             # AGENTMAIL.md, STACK.md, architecture.md, development.md, adr/ (0001-0008)
+docs/             # AGENTMAIL.md, STACK.md, architecture.md, development.md, adr/ (0001-0009)
 ```
 
 ## Rules that must not regress

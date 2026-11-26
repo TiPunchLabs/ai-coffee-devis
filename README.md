@@ -221,6 +221,6 @@ Tests automatiques (corpus, mot-clé, citations, connecteur AgentMail simulé) :
 | `.pre-commit-config.yaml` · `.yamllint.yaml` | contrôles avant commit (fichiers, YAML, clés privées, scripts shell, secrets avec gitleaks, Ruff de `uv.lock`) |
 | `.github/workflows/ci.yml` | CI GitHub : formatage, qualité (Ruff), tests, recherche de secrets (gitleaks) |
 | `LICENSE` | licence MIT |
-| `docs/adr/` | décisions d'architecture (ADR 0001 à 0008), index dans `docs/adr/README.md` |
+| `docs/adr/` | décisions d'architecture (ADR 0001 à 0009), index dans `docs/adr/README.md` |
 
 Inspiration : https://docs.redhat.com/en/learn/ai-quickstarts/rh-helpdesk-email-triage

@@ -12,6 +12,7 @@ Chaque fichier décrit une décision : contexte, choix, alternatives écartées,
 | [0006](0006-secrets-via-direnv-et-pass.md) | Secrets via direnv et pass plutôt qu'un fichier `.env` | Accepté | 25/11/2026 |
 | [0007](0007-courriels-traites-comme-non-fiables.md) | Contenu des courriels traité comme non fiable | Accepté | 25/11/2026 |
 | [0008](0008-interface-en-file-de-travail.md) | Interface en file de travail (liste + détail) | Accepté | 26/11/2026 |
+| [0009](0009-client-openai-pour-ollama.md) | Client `openai` pour appeler Ollama | Accepté | 26/11/2026 |
 
 Modèle pour un nouvel ADR : copie un fichier existant, garde les sections *Contexte*, *Décision*, *Alternatives écartées*, *Conséquences*.
 

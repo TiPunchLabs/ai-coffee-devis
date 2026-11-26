@@ -6,7 +6,7 @@
 
 ```
              ┌──────────────── portable du présentateur (hors ligne possible) ────────────────┐
-navigateur ──► Gradio (127.0.0.1:7860) ──► core.py ──► httpx ──► Ollama (127.0.0.1:11434) ──► gemma4:e2b
+navigateur ──► Gradio (127.0.0.1:7860) ──► core.py ──► openai ──► Ollama /v1 (127.0.0.1:11434) ──► gemma4:e2b
              │        │                                                                         │
              │        └──► live_inbox.py ──► httpx ──(Internet, GET seulement)──► AgentMail API v0
              │                    ▲                                                             │
@@ -23,17 +23,18 @@ navigateur ──► Gradio (127.0.0.1:7860) ──► core.py ──► httpx �
 | Python | 3.12.12 (`.python-version` : `3.12`, `requires-python >=3.12,<3.13`) | langage de l'application | stable, compatible avec Gradio 6 | [0001](adr/0001-uv-pour-python-et-les-dependances.md) |
 | uv | 0.13.5 (installé via mise) | Python, environnement virtuel, dépendances, verrouillage (`uv.lock`) | une seule commande reproductible : `uv sync --locked` | [0001](adr/0001-uv-pour-python-et-les-dependances.md) |
 | Gradio | 6.32.0 | interface web à deux onglets, streaming de la progression | interface en quelques lignes, écoute locale seulement | [0003](adr/0003-gradio-en-local-uniquement.md) |
-| httpx | 0.28.1 | appels HTTP vers Ollama et AgentMail | timeouts explicites, `MockTransport` pour les tests | — |
+| openai | 3.49.0 | client du classifieur, branché sur l'API compatible OpenAI d'Ollama (`/v1`) | client standard, erreurs typées, même code pour un autre serveur compatible | [0009](adr/0009-client-openai-pour-ollama.md) |
+| httpx | 0.28.1 | appels HTTP vers AgentMail ; transport simulé des tests | timeouts explicites, `MockTransport` pour les tests | — |
 
 ## 2. Intelligence artificielle locale
 
 | Technologie | Version | Rôle | Pourquoi | ADR |
 |---|---|---|---|---|
-| Ollama | 0.40.16 | serveur de modèles local (`/api/chat`) | inférence sur le portable, sans Internet | [0002](adr/0002-ollama-local-avec-gemma4-e2b.md) |
+| Ollama | 0.40.16 | serveur de modèles local (API compatible OpenAI `/v1/chat/completions`) | inférence sur le portable, sans Internet | [0002](adr/0002-ollama-local-avec-gemma4-e2b.md) |
 | gemma4:e2b | ID `b37049369adf`, 4,6 Go | classifieur partagé par les deux onglets | 4/4 demandes, 0 fausse alerte, ~3 s à chaud sur le corpus | [0002](adr/0002-ollama-local-avec-gemma4-e2b.md) |
-| Sortie structurée | schéma JSON passé dans `format` | force `{"demande": bool, "citation": str}` | réponse analysable, citation vérifiée dans le courriel | [0004](adr/0004-classifieur-partage-et-citation-verifiee.md) |
+| Sortie structurée | schéma JSON passé dans `response_format` (`json_schema`) | force `{"demande": bool, "citation": str}` | réponse analysable, citation vérifiée dans le courriel | [0004](adr/0004-classifieur-partage-et-citation-verifiee.md) |
 
-Paramètres d'appel : `temperature: 0`, `think: false`, `keep_alive: "30m"`, `stream: false`, délai de 180 s. Modifiable par `OLLAMA_MODEL` et `OLLAMA_URL`.
+Paramètres d'appel : `temperature=0`, `reasoning_effort="none"` (pas de raisonnement préalable), `keep_alive: "30m"` (extension Ollama passée dans `extra_body`), délai de 180 s, aucune nouvelle tentative automatique. Modifiable par `OLLAMA_MODEL` et `OLLAMA_URL`.
 
 ## 3. Courriels en direct
 
