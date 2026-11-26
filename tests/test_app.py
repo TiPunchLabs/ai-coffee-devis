@@ -95,3 +95,77 @@ def test_prepared_score_counts_only_new_rentals() -> None:
     assert "2 à traiter" in header and "1 nouvelle(s) demande(s) de location" in header
     assert app.check_mark("08", board["results"]["08"]) == "Modification de location (hors score)"
     assert app.check_mark("02", board["results"]["02"]) == "✓ Bonne détection"
+
+
+def run_batch(verdicts: dict, **prompts: str) -> list[tuple[str, dict, str, str]]:
+    """All frames of the live « Analyser les messages non analysés » callback."""
+    system = prompts.get("system", app.PROMPT)
+    template = prompts.get("template", app.USER_TEMPLATE)
+    return list(app.analyze_all_live("m", system, template, verdicts, "d402"))
+
+
+def test_batch_analyses_every_pending_message_once(inbox: None) -> None:
+    """Three intentions in one click; a message without text is skipped; a second click changes nothing."""
+    app.MAILBOX.messages["img"] = LiveMail("img", "2026-11-26T18:09:00Z", "Photo", "")
+    frames = run_batch({})
+    status, verdicts, queue, detail = frames[-1]
+    assert status.startswith("✅ **3 message(s) analysé(s)**")
+    assert "2 à traiter, dont 1 nouvelle(s) demande(s) de location · 1 hors périmètre" in status
+    assert "1 sans texte lisible, ignoré(s)" in status
+    assert "2 à traiter" in queue and "1 nouvelle(s) demande(s) de location" in queue
+    assert "◆ Modification de location" in detail and D402_QUOTE in detail  # selected message refreshed
+    assert [f[0] for f in frames[1:-1]] == [f"⏳ {i}/3 message(s) analysé(s) · 0 s" for i in (1, 2, 3)]
+    again = run_batch(verdicts)
+    assert len(again) == 1 and again[0][0].startswith("Tous les messages relevés sont déjà analysés.")
+    assert "2 à traiter" in again[0][2] and "1 nouvelle(s) demande(s) de location" in again[0][2]
+
+
+def test_batch_reanalyses_stale_results_only(inbox: None) -> None:
+    """Old-format results count as « Non analysé »; current results are kept as they are."""
+    _, verdicts, _, _ = analyze("new", {})
+    verdicts["d402"] = {"state": "none", "quote": ""}
+    status = run_batch(verdicts)[-1][0]
+    assert status.startswith("✅ **2 message(s) analysé(s)**")
+
+
+def test_batch_stops_on_service_error_and_keeps_results(inbox: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ollama down after the first message: run interrupted, first result kept, others still pending."""
+    calls: list[str] = []
+
+    def flaky(subject: str, *args: object) -> Verdict:
+        calls.append(subject)
+        if len(calls) > 1:
+            raise app.ServiceError("Ollama ne répond pas sur 127.0.0.1:11434.")
+        return VERDICTS["other"]
+
+    monkeypatch.setattr(app, "classify", flaky)
+    status, verdicts, queue, _ = run_batch({})[-1]
+    assert status.startswith("⛔ **Analyse interrompue** (1/3 traités)")
+    assert len(verdicts) == 1 and "Non analysé" in queue
+
+
+def test_batch_refuses_unusable_prompts_without_calling_the_model(inbox: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prompt checked once, before any message is sent."""
+    monkeypatch.setattr(app, "classify", lambda *args: pytest.fail("model called"))
+    frames = run_batch({}, template="{id} {message}")
+    assert len(frames) == 1 and "Analyse impossible" in frames[0][0]
+
+
+def test_batch_without_retrieved_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing retrieved yet: ask to fetch first."""
+    monkeypatch.setattr(app.MAILBOX, "messages", {})
+    assert run_batch({})[0][0].startswith("Aucun message relevé.")
+
+
+def test_batch_stop_is_cooperative_and_keeps_screen_and_state_in_sync(inbox: None) -> None:
+    """« Arrêter » after the first message: the run ends cleanly and shows exactly the stored results."""
+    frames = app.analyze_all_live("m", app.PROMPT, app.USER_TEMPLATE, {}, "d402")
+    next(frames)  # « Analyse de 3 message(s)… »
+    next(frames)  # first message done
+    assert app.stop_live_analysis().startswith("⏳ Arrêt demandé")
+    status, verdicts, queue, _ = next(frames)
+    assert status.endswith("(1/3 traités)") and "Analyse arrêtée" in status
+    assert len(verdicts) == 1 and queue.count("Non analysé") == 2
+    assert next(frames, None) is None
+    resumed = run_batch(verdicts)[-1][0]
+    assert resumed.startswith("✅ **2 message(s) analysé(s)**")

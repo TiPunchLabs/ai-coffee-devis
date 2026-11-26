@@ -36,6 +36,7 @@
 4. L'interface stocke un résultat par message (`contract: 2`) ; les compteurs « à traiter » et « nouvelles demandes » sont recalculés à partir de cet état, et un résultat d'un autre format est ignoré (le message redevient « Non analysé »).
 5. Chaque résultat met à jour la liste en direct (générateur Gradio). Le score n'est conservé que si les 20 messages ont été traités.
 6. « 3 · Révéler le corrigé » compare le mot-clé et le modèle au corrigé ; une nouvelle analyse efface l'ancien score.
+7. Onglet en direct : « Analyser les messages non analysés » (`app.analyze_all_live`) applique le même `classify` à chaque message relevé sans résultat courant. « Arrêter l'analyse » pose un drapeau propre à la session (`STOP_REQUESTS`), lu entre deux messages : le message en cours se termine, puis l'écran affiche exactement les résultats enregistrés.
 
 ## 4. Sécurité
 
