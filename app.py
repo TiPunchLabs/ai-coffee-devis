@@ -617,6 +617,20 @@ def select_live(verdicts: dict, evt: gr.EventData) -> tuple[str | None, str, gr.
     return selected, show_message(selected, verdicts), gr.Button(visible=selected is not None), ""
 
 
+def classify_live(mail: LiveMail, model: str, system_prompt: str, user_template: str) -> tuple[Outcome, str]:
+    """Classify one live message. Returns (outcome, French status); ServiceError propagates (stop everything)."""
+    start = time.monotonic()
+    try:
+        verdict = classify(mail.subject, mail.body, model, system_prompt, user_template)
+    except AnalysisError as err:
+        return error_outcome(err), f"⚠️ Analyse à vérifier : {err}. Relance ou juge toi-même."
+    info = f"Modèle {model.strip()}, {time.monotonic() - start:.1f} s."
+    if prompts_changed(system_prompt, user_template):
+        info += " Prompts modifiés."
+    mark = "➖" if verdict.category == OTHER else "✅"
+    return outcome_from(verdict, info), f"{mark} {LABELS[verdict.category]} · {info}"
+
+
 def analyze_live(
     message_id: str | None, model: str, system_prompt: str, user_template: str, verdicts: dict
 ) -> tuple[str, dict, str, str]:
@@ -631,23 +645,111 @@ def analyze_live(
         )
         return status, verdicts, live_queue(verdicts, message_id), show_message(message_id, verdicts)
     verdicts = dict(verdicts)
-    start = time.monotonic()
     try:
-        verdict = classify(mail.subject, mail.body, model, system_prompt, user_template)
+        verdicts[mail.message_id], status = classify_live(mail, model, system_prompt, user_template)
     except ServiceError as err:
-        return f"⛔ {err}", verdicts, live_queue(verdicts, message_id), show_message(message_id, verdicts)
-    except AnalysisError as err:
-        verdicts[mail.message_id] = error_outcome(err)
-        status = f"⚠️ Analyse à vérifier : {err}. Relance ou juge toi-même."
-    else:
-        seconds = time.monotonic() - start
-        info = f"Modèle {model.strip()}, {seconds:.1f} s."
-        if prompts_changed(system_prompt, user_template):
-            info += " Prompts modifiés."
-        verdicts[mail.message_id] = outcome_from(verdict, info)
-        mark = "➖" if verdict.category == OTHER else "✅"
-        status = f"{mark} {LABELS[verdict.category]} · {info}"
+        status = f"⛔ {err}"
     return status, verdicts, live_queue(verdicts, message_id), show_message(message_id, verdicts)
+
+
+def batch_summary(outcomes: list[Outcome], seconds: float, skipped: int, custom: bool) -> str:
+    """Final line of a batch run, with the same vocabulary as the queue header."""
+    counts = tally(outcomes)
+    parts = [
+        f"✅ **{len(outcomes)} message(s) analysé(s)** en {seconds:.0f} s",
+        f"{counts['to_process']} à traiter, dont {counts['new']} nouvelle(s) demande(s) de location",
+        f"{counts['other']} hors périmètre",
+    ]
+    if counts["error"]:
+        parts.append(f"{counts['error']} à vérifier")
+    if skipped:
+        parts.append(f"{skipped} sans texte lisible, ignoré(s)")
+    if custom:
+        parts.append("▲ prompts modifiés")
+    return " · ".join(parts) + "."
+
+
+# Sessions whose presenter clicked « Arrêter l’analyse » during a batch run (checked between two messages).
+STOP_REQUESTS: set[str] = set()
+
+
+def session_key(request: gr.Request | None) -> str:
+    """Browser session identifier (a fixed key when called outside Gradio, e.g. in tests)."""
+    return getattr(request, "session_hash", None) or "local"
+
+
+def analyze_all_live(
+    model: str,
+    system_prompt: str,
+    user_template: str,
+    verdicts: dict,
+    selected: str | None,
+    request: gr.Request | None = None,
+) -> Iterator[tuple[str, dict, str, str]]:
+    """Classify every retrieved message without a current result, streaming (status, verdicts, queue, detail).
+
+    Messages already analysed (including « Analyse à vérifier ») keep their result; messages without readable
+    text are skipped; an unusable answer marks that message « Analyse à vérifier » and the run goes on.
+    Ollama or prompt failures stop the run and keep the results already obtained.
+    « Arrêter l’analyse » is cooperative: the message in progress finishes, then the run ends with a frame that
+    shows exactly the stored results (a hard cancel could store a result the browser never displays).
+    """
+    key = session_key(request)
+    STOP_REQUESTS.discard(key)
+    verdicts = dict(verdicts)
+
+    def frame(status: str) -> tuple[str, dict, str, str]:
+        return status, verdicts, live_queue(verdicts, selected), show_message(selected, verdicts)
+
+    mails = live_mails()
+    if not mails:
+        yield frame("Aucun message relevé. Clique d’abord « Relever les nouveaux messages ».")
+        return
+    pending = [m for m in mails if current(verdicts.get(m.message_id)) is None]
+    skipped = sum(1 for m in pending if not m.usable)
+    todo = [m for m in pending if m.usable]
+    if not todo:
+        message = "Tous les messages relevés sont déjà analysés."
+        if skipped:
+            message += f" {skipped} sans texte lisible, ignoré(s)."
+        yield frame(message)
+        return
+    try:
+        check_prompts(system_prompt, user_template)
+    except PromptError as err:
+        yield frame(f"⛔ **Analyse impossible** : {err} Aucun message n’a été envoyé au modèle.")
+        return
+    start = time.monotonic()
+    yield frame(f"⏳ Analyse de {len(todo)} message(s)…")
+    for index, mail in enumerate(todo, 1):
+        if key in STOP_REQUESTS:
+            STOP_REQUESTS.discard(key)
+            yield frame(f"{STOPPED} ({index - 1}/{len(todo)} traités)")
+            return
+        try:
+            verdicts[mail.message_id], _ = classify_live(mail, model, system_prompt, user_template)
+        except ServiceError as err:
+            yield frame(
+                f"⛔ **Analyse interrompue** ({index - 1}/{len(todo)} traités) : {err} "
+                "Les messages déjà analysés gardent leur résultat ; relance pour finir."
+            )
+            return
+        yield frame(f"⏳ {index}/{len(todo)} message(s) analysé(s) · {time.monotonic() - start:.0f} s")
+    outcomes = [verdicts[m.message_id] for m in todo]
+    yield frame(
+        batch_summary(outcomes, time.monotonic() - start, skipped, prompts_changed(system_prompt, user_template))
+    )
+
+
+STOPPED = (
+    "⛔ **Analyse arrêtée.** Les messages déjà analysés gardent leur résultat ; les autres restent « Non analysé »."
+)
+
+
+def stop_live_analysis(request: gr.Request | None = None) -> str:
+    """Ask the running batch of this session to stop after the message in progress."""
+    STOP_REQUESTS.add(session_key(request))
+    return "⏳ Arrêt demandé : le message en cours se termine…"
 
 
 # ---------------------------------------------------------------- layout
@@ -862,6 +964,8 @@ def build():
             )
             with gr.Row(elem_classes="toolbar"):
                 fetch_btn = gr.Button("Relever les nouveaux messages", variant="primary")
+                analyze_all_btn = gr.Button("Analyser les messages non analysés", variant="secondary")
+                stop_live_btn = gr.Button("Arrêter l’analyse", variant="secondary")
             live_status = gr.Markdown(elem_classes="run-status", elem_id="live-status")
             with gr.Row(equal_height=False):
                 with gr.Column(scale=2, min_width=320):
@@ -881,6 +985,12 @@ def build():
                 [live_status, address, live_selected, live_list, live_detail, analyze_btn],
             )
             live_list.select(select_live, verdicts, [live_selected, live_detail, analyze_btn, live_status])
+            analyze_all_btn.click(
+                analyze_all_live,
+                [model, system_box, template_box, verdicts, live_selected],
+                [live_status, verdicts, live_list, live_detail],
+            )
+            stop_live_btn.click(stop_live_analysis, outputs=live_status, queue=False)
             analyze_btn.click(
                 analyze_live,
                 [live_selected, model, system_box, template_box, verdicts],
