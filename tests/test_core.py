@@ -37,10 +37,11 @@ def test_keyword_baseline_and_score() -> None:
 def test_locate_quote_tolerates_apostrophes_but_rejects_inventions() -> None:
     """Quotes must appear contiguously in the email."""
     body = "Pouvez-vous nous faire un devis pour deux chapiteaux ?"
-    assert locate_quote("« faire un devis »", "", body) == "faire un devis"
-    assert locate_quote("Deux chapiteaux et leur montage", "", body) is None
-    assert locate_quote("l'événementiel", "", "les métiers de l’événementiel") == "l’événementiel"
-    assert locate_quote("", "", body) is None
+    assert locate_quote("« faire un devis »", body) == "faire un devis"
+    assert locate_quote("Deux chapiteaux et leur montage", body) is None
+    assert locate_quote("l'événementiel", "les métiers de l’événementiel") == "l’événementiel"
+    assert locate_quote("", body) is None
+    assert locate_quote("FAIRE UN DEVIS", body) is None  # case and accents are preserved, not normalised
 
 
 def fake_ollama(monkeypatch: pytest.MonkeyPatch, status: int, content: str, seen: list) -> None:
@@ -75,15 +76,22 @@ def fake_ollama(monkeypatch: pytest.MonkeyPatch, status: int, content: str, seen
 def test_classify_sends_only_subject_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """No identifier or answer key reaches the model; settings match the demo; quote returned verbatim."""
     seen: list = []
-    fake_ollama(monkeypatch, 200, json.dumps({"demande": True, "citation": "40 chaises"}), seen)
+    fake_ollama(
+        monkeypatch,
+        200,
+        json.dumps({"demande": True, "type_demande": "nouvelle_location", "citation": "40 chaises"}),
+        seen,
+    )
     verdict = classify("Notre fête", "Il nous faudrait 40 chaises samedi.", "m")
-    assert verdict.is_request and verdict.quote == "40 chaises"
+    assert verdict.is_new_rental and verdict.quote == "40 chaises"
     sent = seen[0]
     user = json.loads(sent["messages"][1]["content"])
     assert set(user) == {"objet", "message"}
     assert "02" not in json.dumps(sent["messages"])
     assert (sent["temperature"], sent["reasoning_effort"], sent["keep_alive"]) == (0, "none", "30m")
-    assert sent["response_format"]["json_schema"]["schema"] == core.SCHEMA
+    assert sent["response_format"]["json_schema"]["schema"] == core.response_schema(
+        "Il nous faudrait 40 chaises samedi."
+    )
 
 
 def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,7 +105,9 @@ def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_ollama(monkeypatch, 200, "pas du json", [])
     with pytest.raises(AnalysisError, match="illisible"):
         classify("a", "b", "m")
-    fake_ollama(monkeypatch, 200, json.dumps({"demande": True, "citation": "inventé"}), [])
+    fake_ollama(
+        monkeypatch, 200, json.dumps({"demande": True, "type_demande": "nouvelle_location", "citation": "inventé"}), []
+    )
     with pytest.raises(AnalysisError, match="citation"):
         classify("a", "b", "m")
 
@@ -118,7 +128,7 @@ def test_classify_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_default_prompts_send_the_same_user_message_as_before(monkeypatch: pytest.MonkeyPatch) -> None:
     """The default template renders exactly the historical JSON payload, even with tricky content."""
     seen: list = []
-    fake_ollama(monkeypatch, 200, json.dumps({"demande": False, "citation": ""}), seen)
+    fake_ollama(monkeypatch, 200, json.dumps({"demande": False, "type_demande": "autre", "citation": ""}), seen)
     subject, body = 'Objet {message} "x"', 'Corps {objet} {id} \\ "q"\nligne é' * 400
     classify(subject, body, "m")
     expected = json.dumps({"objet": subject, "message": body[: core.BODY_MAX_CHARS]}, ensure_ascii=False)
@@ -129,7 +139,7 @@ def test_default_prompts_send_the_same_user_message_as_before(monkeypatch: pytes
 def test_custom_prompts_are_sent_and_only_subject_and_body_are_filled(monkeypatch: pytest.MonkeyPatch) -> None:
     """Edited prompts reach the model; only {objet} and {message} are replaced, once."""
     seen: list = []
-    fake_ollama(monkeypatch, 200, json.dumps({"demande": False, "citation": ""}), seen)
+    fake_ollama(monkeypatch, 200, json.dumps({"demande": False, "type_demande": "autre", "citation": ""}), seen)
     classify("Fête", "Texte avec {objet}", "m", system_prompt="Consigne test", user_template="O={objet} M={message}")
     assert seen[0]["messages"][0]["content"] == "Consigne test"
     assert seen[0]["messages"][1]["content"] == 'O="Fête" M="Texte avec {objet}"'
@@ -149,7 +159,112 @@ def test_unusable_prompts_never_reach_the_model(
 ) -> None:
     """Empty system prompt, missing {message} or unknown placeholder: refused before any HTTP call."""
     seen: list = []
-    fake_ollama(monkeypatch, 200, json.dumps({"demande": True, "citation": "x"}), seen)
+    fake_ollama(
+        monkeypatch, 200, json.dumps({"demande": True, "type_demande": "nouvelle_location", "citation": "x"}), seen
+    )
     with pytest.raises(PromptError, match=expected):
         classify("a", "b", "m", system_prompt=system_prompt, user_template=template)
     assert seen == []
+
+
+# ---------------------------------------------------------------- three-intention contract
+
+D402_SUBJECT = "Devis D-402 : changement de date"
+D402_BODY = (
+    "Bonjour, pour le devis D-402 déjà signé, pouvez-vous décaler la livraison des chapiteaux "
+    "du 5 au 6 décembre ? Le reste ne change pas."
+)
+
+
+def answer(demande: object, type_demande: object, citation: object) -> str:
+    """A model answer with the three contract fields."""
+    return json.dumps({"demande": demande, "type_demande": type_demande, "citation": citation}, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("content", "category", "quote"),
+    [
+        (
+            answer(True, "nouvelle_location", "Quel serait votre tarif ?"),
+            "nouvelle_location",
+            "Quel serait votre tarif ?",
+        ),
+        (answer(True, "modification_location", "retirez deux tables"), "modification_location", "retirez deux tables"),
+        (answer(False, "autre", ""), "autre", ""),
+    ],
+)
+def test_valid_answers(content: str, category: str, quote: str) -> None:
+    """The three allowed combinations; the returned quote is the body's own text."""
+    body = "Bonjour, Quel serait votre tarif ? Pour notre réservation confirmée, retirez deux tables."
+    verdict = core.parse_verdict(content, body)
+    assert (verdict.category, verdict.quote) == (category, quote)
+    assert verdict.to_process == (category != "autre")
+    assert verdict.is_new_rental == (category == "nouvelle_location")
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("pas du json", "JSON invalide"),
+        ('["demande", true]', "réponse incomplète"),
+        (json.dumps({"demande": True, "citation": "x"}), "réponse incomplète"),  # old two-field contract
+        (json.dumps({"demande": True, "type_demande": "nouvelle_location", "citation": "tarif", "x": 1}), "incomplète"),
+        (answer(True, "location", "tarif"), "catégorie inconnue"),
+        (answer("true", "nouvelle_location", "tarif"), "mal typée"),
+        (answer(1, "nouvelle_location", "tarif"), "mal typée"),
+        (answer(True, "nouvelle_location", None), "mal typée"),
+        (answer(False, "nouvelle_location", "tarif"), "contradictoire"),
+        (answer(True, "autre", ""), "contradictoire"),
+        (answer(False, "autre", "tarif"), "contradictoire"),
+        (answer(True, "modification_location", ""), "citation introuvable"),
+        (answer(True, "nouvelle_location", "un tarif imaginaire"), "citation introuvable"),
+        (answer(True, "nouvelle_location", "Tarif"), "citation introuvable"),  # case differs from the body
+    ],
+)
+def test_invalid_answers_go_to_review(content: str, expected: str) -> None:
+    """Malformed, contradictory or invented answers raise AnalysisError (« Analyse à vérifier »)."""
+    with pytest.raises(AnalysisError, match=expected):
+        core.parse_verdict(content, "Bonjour, quel serait votre tarif ?")
+
+
+def test_schema_sent_to_the_model_allows_only_the_three_combinations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Structured output: request branch (citation = a real extract of the body) or « autre » with "" only."""
+    seen: list = []
+    fake_ollama(monkeypatch, 200, answer(False, "autre", ""), seen)
+    classify("Devis D-402 : changement de date", D402_BODY, "m")
+    request, other = seen[0]["response_format"]["json_schema"]["schema"]["oneOf"]
+    assert request["properties"]["type_demande"]["enum"] == ["nouvelle_location", "modification_location"]
+    assert request["properties"]["demande"] == {"type": "boolean", "const": True}
+    assert other["properties"] == {
+        "type_demande": {"type": "string", "const": "autre"},
+        "demande": {"type": "boolean", "const": False},
+        "citation": {"type": "string", "const": ""},
+    }
+    for branch in (request, other):
+        assert branch["required"] == ["type_demande", "demande", "citation"] and branch["additionalProperties"] is False
+    extracts = request["properties"]["citation"]["enum"]
+    assert "pouvez-vous décaler la livraison des chapiteaux du 5 au 6 décembre ?" in extracts
+    assert all(e in D402_BODY for e in extracts)
+
+
+def test_citation_extracts_are_verbatim_and_truncated_like_the_model_input() -> None:
+    """Extracts keep accents and case, and never go beyond the 4000 characters sent to the model."""
+    assert core.citation_extracts("Bonjour, Quel serait votre tarif ? Merci.") == [
+        "Bonjour, Quel serait votre tarif ?",
+        "Quel serait votre tarif ?",
+        "Merci.",
+    ]
+    long_body = "a" * core.BODY_MAX_CHARS + " Phrase cachée ?"
+    assert not any("cachée" in e for e in core.citation_extracts(long_body))
+
+
+def test_d402_reaches_the_model_as_clean_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC8: only the real subject and body; no expected result, comment or test case in the prompts."""
+    seen: list = []
+    quote = "pouvez-vous décaler la livraison des chapiteaux du 5 au 6 décembre ?"
+    fake_ollama(monkeypatch, 200, answer(True, "modification_location", quote), seen)
+    verdict = classify(D402_SUBJECT, D402_BODY, "m")
+    assert (verdict.category, verdict.quote) == ("modification_location", quote)
+    system, user = seen[0]["messages"][0]["content"], seen[0]["messages"][1]["content"]
+    assert json.loads(user) == {"objet": D402_SUBJECT, "message": D402_BODY}
+    assert "D-402" not in system and "Extrait retenu" not in user and "La règle" not in user

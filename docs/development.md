@@ -10,6 +10,7 @@ uv run python app.py                   # app on http://127.0.0.1:7860
 direnv exec . uv run python app.py     # same, with AgentMail credentials from pass
 uv run python live_inbox.py            # AgentMail connection check (key never printed)
 uv run pytest -q                       # tests (no network)
+OLLAMA_LIVE=1 uv run pytest tests/test_intents_live.py -v   # acceptance emails on the real local model
 uv run ruff check . && uv run ruff format --check .
 uv tool run pre-commit run --all-files # all hooks (needs a git repository)
 ```
@@ -21,6 +22,8 @@ Arrêter l'application ou libérer le port : [README, section 3.4](../README.md#
 | Fichier | Couvre | Réseau |
 |---|---|---|
 | `tests/test_core.py` | corpus, mot « devis », citation, contenu envoyé au modèle, erreurs Ollama | Ollama simulé |
+| `tests/test_app.py` | badges, extrait, prochaine étape et compteurs « à traiter » / « nouvelles demandes » (D-402, ré-analyse, résultat périmé, erreur d'analyse) | modèle simulé |
+| `tests/test_intents_live.py` | 7 courriels d'acceptation (AC1 à AC5) sur le vrai modèle ; ignoré sauf `OLLAMA_LIVE=1` | Ollama local |
 | `tests/test_live_inbox.py` | pagination, déduplication, messages envoyés ignorés, expéditeur masqué, erreurs HTTP et réseau, HTML | AgentMail simulé (`httpx.MockTransport`) |
 
 L'interface (`app.py`) n'a pas de test automatique : après une modification, refaire le parcours de [README, section 3.1](../README.md#31-premier-test-sans-agentmail-ni-secret) et vérifier l’onglet en direct (README section 3.3) et le panneau « ⚙ Paramètres » (README section 3.2).

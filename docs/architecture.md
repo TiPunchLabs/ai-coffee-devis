@@ -31,10 +31,11 @@
 ## 3. Flux d'une analyse
 
 1. `app.run_analysis` parcourt les 20 messages et appelle `core.classify(objet, corps, modèle)` pour chacun.
-2. `classify` envoie à Ollama, via le client `openai`, le prompt système et le message utilisateur construit à partir du gabarit (par défaut `{"objet": …, "message": …}`), avec un schéma JSON imposé (`demande`, `citation`). Les prompts viennent du panneau « ⚙ Paramètres » (session du navigateur) ou, par défaut, de `core.PROMPT` et `core.USER_TEMPLATE` ; `check_prompts` refuse toute variable autre que `{objet}` et `{message}` avant l'appel.
-3. Si `demande` est vrai, `locate_quote` doit retrouver la citation mot pour mot dans le courriel ; sinon le message passe « À vérifier ».
-4. Chaque résultat met à jour la liste en direct (générateur Gradio). Le score n'est conservé que si les 20 messages ont été traités.
-5. « 3 · Révéler le corrigé » compare le mot-clé et le modèle au corrigé ; une nouvelle analyse efface l'ancien score.
+2. `classify` envoie à Ollama, via le client `openai`, le prompt système et le message utilisateur construit à partir du gabarit (par défaut `{"objet": …, "message": …}`), avec un schéma JSON propre à ce courriel (`core.response_schema`) qui n'autorise que trois combinaisons : `nouvelle_location` ou `modification_location` avec `demande: true` et une `citation` choisie parmi les extraits réels du corps, ou `autre` avec `demande: false` et `citation: ""`. Les prompts viennent du panneau « ⚙ Paramètres » (session du navigateur) ou, par défaut, de `core.PROMPT` et `core.USER_TEMPLATE` ; `check_prompts` refuse toute variable autre que `{objet}` et `{message}` avant l'appel.
+3. `parse_verdict` revalide tout côté application : exactement trois champs, catégorie connue, vrai booléen, cohérence des champs, citation retrouvée mot pour mot dans le corps envoyé au modèle (`locate_quote`). Sinon le message passe « Analyse à vérifier », distinct de « Hors périmètre ».
+4. L'interface stocke un résultat par message (`contract: 2`) ; les compteurs « à traiter » et « nouvelles demandes » sont recalculés à partir de cet état, et un résultat d'un autre format est ignoré (le message redevient « Non analysé »).
+5. Chaque résultat met à jour la liste en direct (générateur Gradio). Le score n'est conservé que si les 20 messages ont été traités.
+6. « 3 · Révéler le corrigé » compare le mot-clé et le modèle au corrigé ; une nouvelle analyse efface l'ancien score.
 
 ## 4. Sécurité
 

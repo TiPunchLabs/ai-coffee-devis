@@ -110,26 +110,35 @@ Vérifie que l'adresse confirmée est bien celle d'AI Coffee, **pas celle de Sco
 3. Depuis **une autre adresse** (ton Gmail personnel, par exemple), envoie l'un des messages de l'étape 6 à cette adresse.
 4. Attends 20 à 30 secondes, clique à nouveau **« Relever les nouveaux messages »** : « 1 nouveau(x) message(s) relevé(s) ».
 5. Clique-le dans la liste de gauche (heure · objet · statut) : l'objet et le texte s'affichent à droite, sans l'expéditeur. Le bouton **« Analyser ce message avec le modèle local »** apparaît au-dessus.
-6. Clique **« Analyser ce message avec le modèle local »** : la ligne prend son statut (« ● À rappeler » ou « Pas une demande ») ; pour une demande, « Ce que demande le client » affiche l'extrait exact, surligné dans le courriel.
+6. Clique **« Analyser ce message avec le modèle local »** : la ligne prend son statut (« ● Nouvelle demande de location », « ◆ Modification de location » ou « Hors périmètre ») ; pour les deux premiers, « Ce que demande le client » affiche l'extrait exact, surligné dans le courriel, et la prochaine étape suggérée. L'en-tête de liste compte les messages « à traiter » et, à part, les nouvelles demandes de location.
 7. Clique encore **« Relever les nouveaux messages »** : « Aucun nouveau message (1 déjà relevé(s)) » ; le message reste une seule fois dans la liste et reste sélectionnable. L'onglet « Démo préparée » et son score ne changent pas.
 
-## 6. Deux messages de répétition (fictifs)
+## 6. Trois messages de répétition (fictifs)
 
-**Message A · nouvelle demande, sans le mot « devis »** — verdict attendu : *Nouvelle demande de location → à rappeler*
+**Message A · nouvelle demande, sans le mot « devis »** — verdict attendu : *Nouvelle demande de location*
 
 ```text
 Objet : Mariage à Saint-François
 Bonjour, nous nous marions le 19 décembre à Saint-François. Auriez-vous 80 chaises blanches et deux tentes de 6 mètres ? Merci de me dire si c'est possible.
 ```
 
-**Message B · suivi de paiement, avec le mot « devis »** — verdict attendu : *Pas une nouvelle demande de location*
+**Message B · suivi de paiement, avec le mot « devis »** — verdict attendu : *Hors périmètre*
 
 ```text
 Objet : Règlement du devis D-311
 Bonjour, je vous confirme le virement du solde pour le devis D-311 accepté la semaine dernière. Merci de m'envoyer la facture.
 ```
 
-Lors de la répétition du 25/11/2026, `gemma4:e2b` a classé A comme demande (extrait : « Auriez-vous 80 chaises blanches et deux tentes de 6 mètres ? ») et B comme non-demande, en appel direct du classifieur.
+**Message C · modification d'un devis signé** — verdict attendu : *Modification de location*
+
+```text
+Objet : Devis D-402 : changement de date
+Bonjour, pour le devis D-402 déjà signé, pouvez-vous décaler la livraison des chapiteaux du 5 au 6 décembre ? Le reste ne change pas.
+```
+
+Ne copie que le contenu des blocs `text` : le verdict attendu et tout commentaire restent hors du courriel, sinon ils sont envoyés au modèle comme texte du client.
+
+Lors de la répétition du 26/11/2026 (appel direct du classifieur, `gemma4:e2b`) : A → nouvelle demande (extrait : « Auriez-vous 80 chaises blanches et deux tentes de 6 mètres ? »), B → hors périmètre, C → modification (extrait : « pour le devis D-402 déjà signé, pouvez-vous décaler la livraison des chapiteaux du 5 au 6 décembre ? »).
 
 ### Consigne à afficher ou dire au public
 

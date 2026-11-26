@@ -18,12 +18,16 @@ from core import (
     DEFAULT_MODEL,
     EXPECTED,
     EXPECTED_LABELS,
+    MODIFICATION,
+    NEW_RENTAL,
+    OTHER,
     PROMPT,
     USER_TEMPLATE,
     AnalysisError,
     Mail,
     PromptError,
     ServiceError,
+    Verdict,
     check_prompts,
     classify,
     keyword_matches,
@@ -40,9 +44,68 @@ MAILBOX = Mailbox()
 
 Run = dict | None
 Board = dict
-Outcome = dict  # {"state": "request" | "none" | "error", "quote": str, "error": str, ...}
+Outcome = dict  # {"contract": 2, "category": nouvelle_location | modification_location | autre | error, "quote", ...}
+
+# Version of the analysis contract stored in each outcome. Results from another version (e.g. the old
+# two-field demande/citation answer) cannot say whether a message is a modification: they are ignored
+# and the message shows « Non analysé » until it is analysed again.
+CONTRACT = 2
+ERROR = "error"
+LABELS = {
+    NEW_RENTAL: "Nouvelle demande de location",
+    MODIFICATION: "Modification de location",
+    OTHER: "Hors périmètre",
+    ERROR: "Analyse à vérifier",
+}
+NEXT_STEPS = {
+    NEW_RENTAL: "Vérifier la disponibilité du matériel et préparer une réponse.",
+    MODIFICATION: "Vérifier si la modification est possible et répondre au client.",
+    OTHER: "Aucune location à préparer ni à modifier. Si le courriel pose une question, y répondre normalement.",
+    ERROR: "Lire le courriel ci-dessous et décider soi-même, ou relancer l’analyse.",
+}
 
 EMPTY_BOARD: Board = {"results": {}, "keyword": False, "revealed": False, "progress": None}
+
+
+# ---------------------------------------------------------------- analysis outcomes
+
+
+def outcome_from(verdict: Verdict, info: str = "") -> Outcome:
+    """Stored result of a successful analysis."""
+    return {"contract": CONTRACT, "category": verdict.category, "quote": verdict.quote, "info": info}
+
+
+def error_outcome(err: Exception) -> Outcome:
+    """Stored result of an analysis that needs review (never counted as classified)."""
+    return {"contract": CONTRACT, "category": ERROR, "quote": "", "error": str(err)}
+
+
+def current(outcome: Outcome | None) -> Outcome | None:
+    """Outcome usable with the current contract, or None (not analysed, or stale format)."""
+    return outcome if outcome and outcome.get("contract") == CONTRACT else None
+
+
+def tally(outcomes: list[Outcome | None]) -> dict[str, int]:
+    """Counters derived from the analysis state: one entry per message, so re-analysis never double counts."""
+    cats = [o["category"] for o in map(current, outcomes) if o]
+    return {
+        "to_process": sum(c in (NEW_RENTAL, MODIFICATION) for c in cats),
+        "new": cats.count(NEW_RENTAL),
+        "modification": cats.count(MODIFICATION),
+        "other": cats.count(OTHER),
+        "error": cats.count(ERROR),
+    }
+
+
+def counters_html(counts: dict[str, int]) -> list[str]:
+    """« À traiter » first, then new inquiries (the only ones counted as new requests)."""
+    parts = [
+        f"<span class='q-count'>{counts['to_process']} à traiter</span>",
+        f"{counts['new']} nouvelle(s) demande(s) de location",
+    ]
+    if counts["error"]:
+        parts.append(f"{counts['error']} à vérifier")
+    return parts
 
 
 # ---------------------------------------------------------------- rendering helpers
@@ -53,15 +116,36 @@ def esc(text: str) -> str:
     return html.escape(text, quote=True)
 
 
+BADGES = {
+    NEW_RENTAL: ("attention", "● "),
+    MODIFICATION: ("attention", "◆ "),
+    ERROR: ("attention", "▲ "),
+    OTHER: ("muted", ""),
+}
+
+
 def badge(outcome: Outcome | None, pending: str) -> str:
-    """Status pill: text first, colour only reinforces it."""
+    """Status pill: the label carries the meaning, colour only reinforces it (amber = à traiter)."""
+    outcome = current(outcome)
     if outcome is None:
         return f'<span class="q-badge q-badge--muted">{pending}</span>'
-    if outcome["state"] == "request":
-        return '<span class="q-badge q-badge--attention">● À rappeler</span>'
-    if outcome["state"] == "error":
-        return '<span class="q-badge q-badge--attention">▲ À vérifier</span>'
-    return '<span class="q-badge q-badge--muted">Pas une demande</span>'
+    tone, mark = BADGES[outcome["category"]]
+    return f'<span class="q-badge q-badge--{tone}">{mark}{LABELS[outcome["category"]]}</span>'
+
+
+def quote_of(outcome: Outcome | None) -> str:
+    """Verified customer quote for a message to process, else ""."""
+    outcome = current(outcome)
+    return outcome["quote"] if outcome and outcome["category"] in (NEW_RENTAL, MODIFICATION) else ""
+
+
+def second_line(outcome: Outcome | None, body: str) -> str:
+    """Row preview: the customer's request when there is one, else the start of the email."""
+    if quote_of(outcome):
+        return f"« {esc(preview(quote_of(outcome), 90))} »"
+    if current(outcome) and current(outcome)["category"] == ERROR:
+        return "Réponse du modèle à vérifier"
+    return esc(preview(body))
 
 
 def highlight(body: str, quote: str = "", keyword: bool = False) -> str:
@@ -85,19 +169,26 @@ def preview(text: str, limit: int = 110) -> str:
 
 def request_section(outcome: Outcome | None, pending: str) -> str:
     """« Ce que demande le client » block, then the next step for the operator."""
+    outcome = current(outcome)
     if outcome is None:
         what, todo = f"<p class='q-muted'>{pending}</p>", ""
-    elif outcome["state"] == "request":
-        what = f"<blockquote class='q-ask'>« {esc(outcome['quote'])} »</blockquote>"
-        what += "<p class='q-note'>Phrase recopiée par le modèle et retrouvée mot pour mot dans le courriel.</p>"
-        todo = "Rappeler ce client : c’est une nouvelle demande de location."
-    elif outcome["state"] == "error":
-        what = f"<p>Réponse du modèle inutilisable : {esc(outcome['error'])}.</p>"
-        todo = "Lire le courriel ci-dessous et décider soi-même."
     else:
-        what = "<p>Le modèle ne voit pas de nouvelle demande de location dans ce message.</p>"
-        todo = "Rien de nouveau à proposer à ce client."
-    next_step = f"<p class='q-next'><strong>Prochaine étape</strong> · {todo}</p>" if todo else ""
+        category = outcome["category"]
+        todo = NEXT_STEPS[category]
+        if category in (NEW_RENTAL, MODIFICATION):
+            what = (
+                f"<p class='q-kind'>{LABELS[category]}</p>"
+                f"<blockquote class='q-ask'>« {esc(outcome['quote'])} »</blockquote>"
+                "<p class='q-note'>Extrait recopié par le modèle et retrouvé mot pour mot dans le courriel.</p>"
+            )
+        elif category == ERROR:
+            what = f"<p>Analyse à vérifier : {esc(outcome['error'])}.</p>"
+        else:
+            what = (
+                "<p>Hors périmètre : le modèle ne voit ni nouvelle demande de location, "
+                "ni modification d’une location existante.</p>"
+            )
+    next_step = f"<p class='q-next'><strong>Prochaine étape suggérée</strong> · {todo}</p>" if todo else ""
     return f"<section class='q-section'><h3>Ce que demande le client</h3>{what}{next_step}</section>"
 
 
@@ -188,9 +279,12 @@ def on_prompts_change(system_prompt: str, user_template: str, board: Board, sele
 def check_mark(mail_id: str, outcome: Outcome | None) -> str:
     """After the reveal: compare the model with the answer key, in words."""
     expected = mail_id in EXPECTED
+    outcome = current(outcome)
     if outcome is None:
-        return "Corrigé : nouvelle demande" if expected else "Corrigé : pas une demande"
-    found = outcome["state"] == "request"
+        return "Corrigé : nouvelle demande" if expected else "Corrigé : pas une nouvelle demande"
+    found = outcome["category"] == NEW_RENTAL
+    if not expected and outcome["category"] == MODIFICATION:
+        return "Modification de location (hors score)"
     if expected and found:
         return "✓ Bonne détection"
     if expected:
@@ -207,11 +301,7 @@ def prepared_header(board: Board) -> str:
     if board["keyword"]:
         parts.append(f"{len(KEYWORD_IDS)} contiennent « devis »")
     if results or board["progress"]:
-        requests = sum(1 for o in results.values() if o["state"] == "request")
-        parts.append(f"<span class='q-count'>{requests} à rappeler</span>")
-        errors = sum(1 for o in results.values() if o["state"] == "error")
-        if errors:
-            parts.append(f"{errors} à vérifier")
+        parts += counters_html(tally(list(results.values())))
         if board["progress"]:
             parts.append(board["progress"])
     return " · ".join(parts)
@@ -224,12 +314,7 @@ def prepared_queue(board: Board, selected: str | None) -> str:
     for mail in MAILS:
         outcome = board["results"].get(mail.id)
         tags = "<span class='q-tag'>« devis »</span>" if board["keyword"] and mail.id in KEYWORD_IDS else ""
-        if outcome and outcome["state"] == "request":
-            second = f"« {esc(preview(outcome['quote'], 90))} »"
-        elif outcome and outcome["state"] == "error":
-            second = "Réponse du modèle à vérifier"
-        else:
-            second = esc(preview(mail.body))
+        second = second_line(outcome, mail.body)
         extra = f"<span class='q-check'>{check_mark(mail.id, outcome)}</span>" if board["revealed"] else ""
         rows.append(
             row_html(
@@ -258,7 +343,7 @@ def prepared_detail(board: Board, selected: str | None) -> str:
         label = f"nouvelle demande ({EXPECTED_LABELS[mail.id]})" if mail.id in EXPECTED else "pas une nouvelle demande"
         reveal_line = f"<p class='q-reveal'><strong>Corrigé</strong> · {label} · {check_mark(mail.id, outcome)}</p>"
     kw_line = "<span class='q-tag'>contient « devis »</span>" if keyword else ""
-    quote = outcome["quote"] if outcome and outcome["state"] == "request" else ""
+    quote = quote_of(outcome)
     return (
         "<a class='q-back' href='#prep-queue'>← Retour à la liste</a>"
         f"<div class='q-detail-head'><span class='q-meta'>Message Nº {mail.id} {kw_line}</span>"
@@ -339,17 +424,17 @@ def run_analysis(
             return
         except AnalysisError as err:
             errors[mail.id] = str(err)
-            results[mail.id] = {"state": "error", "quote": "", "error": str(err)}
+            results[mail.id] = error_outcome(err)
         else:
-            if verdict.is_request:
+            if verdict.is_new_rental:
                 found.add(mail.id)
-            results[mail.id] = {"state": "request" if verdict.is_request else "none", "quote": verdict.quote}
+            results[mail.id] = outcome_from(verdict)
         elapsed = time.monotonic() - start
         yield f"⏳ {index}/{len(MAILS)} messages analysés · {elapsed:.0f} s", None, panel(""), *views(board, selected)
     elapsed = time.monotonic() - start
     status = (
         f"✅ **Analyse terminée** : {len(MAILS)} messages en {elapsed:.0f} s avec `{model.strip()}` · "
-        f"{len(found)} rappel(s) suggéré(s)."
+        f"{tally(list(results.values()))['to_process']} à traiter, dont {len(found)} nouvelle(s) demande(s) de location."
     )
     if errors:
         status += f" ⚠️ {len(errors)} message(s) à vérifier : {', '.join(sorted(errors))}."
@@ -459,12 +544,10 @@ def live_queue(verdicts: dict, selected: str | None) -> str:
     rows = []
     for mail in mails:
         outcome = verdicts.get(mail.message_id)
-        if outcome and outcome["state"] == "request":
-            second = f"« {esc(preview(outcome['quote'], 90))} »"
-        elif not mail.usable:
-            second = "Aucun texte lisible (image ou pièce jointe seule)"
+        if mail.usable:
+            second = second_line(outcome, mail.body)
         else:
-            second = esc(preview(mail.body))
+            second = "Aucun texte lisible (image ou pièce jointe seule)"
         rows.append(
             row_html(
                 mail.message_id,
@@ -475,10 +558,10 @@ def live_queue(verdicts: dict, selected: str | None) -> str:
                 mail.message_id == selected,
             )
         )
-    requests = sum(1 for m in mails if verdicts.get(m.message_id, {}).get("state") == "request")
     header = f"<strong>{len(mails)} message(s) relevé(s)</strong>"
-    if verdicts:
-        header += f" · <span class='q-count'>{requests} à rappeler</span>"
+    outcomes = [verdicts.get(m.message_id) for m in mails]
+    if any(map(current, outcomes)):
+        header = " · ".join([header, *counters_html(tally(outcomes))])
     return queue_html(rows, header, "Aucun message relevé. Clique « Relever les nouveaux messages ».")
 
 
@@ -491,9 +574,13 @@ def show_message(message_id: str | None, verdicts: dict) -> str:
     pending = "Pas encore analysé. Clique « Analyser ce message avec le modèle local »."
     if not mail.usable:
         pending = "Ce message n’a pas de texte lisible (image ou pièce jointe seule) : il ne peut pas être analysé."
-    quote = outcome["quote"] if outcome and outcome["state"] == "request" else ""
+    quote = quote_of(outcome)
     body = highlight(mail.body, quote) if mail.usable else "<em>(aucun texte lisible dans ce message)</em>"
-    run_info = f"<p class='q-note'>{esc(outcome['info'])}</p>" if outcome and outcome.get("info") else ""
+    run_info = (
+        f"<p class='q-note'>{esc(current(outcome)['info'])}</p>"
+        if current(outcome) and current(outcome).get("info")
+        else ""
+    )
     return (
         "<a class='q-back' href='#live-queue'>← Retour à la liste</a>"
         f"<div class='q-detail-head'><span class='q-meta'>Reçu à {local_time(mail.timestamp)}</span>"
@@ -550,19 +637,16 @@ def analyze_live(
     except ServiceError as err:
         return f"⛔ {err}", verdicts, live_queue(verdicts, message_id), show_message(message_id, verdicts)
     except AnalysisError as err:
-        verdicts[mail.message_id] = {"state": "error", "quote": "", "error": str(err)}
+        verdicts[mail.message_id] = error_outcome(err)
         status = f"⚠️ Analyse à vérifier : {err}. Relance ou juge toi-même."
     else:
         seconds = time.monotonic() - start
         info = f"Modèle {model.strip()}, {seconds:.1f} s."
         if prompts_changed(system_prompt, user_template):
             info += " Prompts modifiés."
-        if verdict.is_request:
-            verdicts[mail.message_id] = {"state": "request", "quote": verdict.quote, "info": info}
-            status = f"✅ Nouvelle demande de location → à rappeler · {info}"
-        else:
-            verdicts[mail.message_id] = {"state": "none", "quote": "", "info": info}
-            status = f"➖ Pas une nouvelle demande de location · {info} Qu’en pense l’expéditeur ?"
+        verdicts[mail.message_id] = outcome_from(verdict, info)
+        mark = "➖" if verdict.category == OTHER else "✅"
+        status = f"{mark} {LABELS[verdict.category]} · {info}"
     return status, verdicts, live_queue(verdicts, message_id), show_message(message_id, verdicts)
 
 
@@ -629,6 +713,7 @@ CSS = """
   color: var(--body-text-color-subdued); margin: 0 0 8px; }
 .q-ask { margin: 0; padding: 10px 14px; border-left: 3px solid var(--q-amber-border); background: var(--q-amber-bg);
   border-radius: 0 8px 8px 0; font-size: 1.1rem; line-height: 1.5; color: var(--body-text-color); }
+.q-kind { margin: 0 0 6px; font-weight: 650; color: var(--q-amber-text); }
 .q-note { font-size: 0.85rem; color: var(--body-text-color-subdued); margin: 6px 0 0; }
 .q-muted { color: var(--body-text-color-subdued); margin: 0; }
 .q-next { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--border-color-primary); }

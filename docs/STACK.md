@@ -32,7 +32,7 @@ navigateur ──► Gradio (127.0.0.1:7860) ──► core.py ──► openai 
 |---|---|---|---|---|
 | Ollama | 0.40.16 | serveur de modèles local (API compatible OpenAI `/v1/chat/completions`) | inférence sur le portable, sans Internet | [0002](adr/0002-ollama-local-avec-gemma4-e2b.md) |
 | gemma4:e2b | ID `b37049369adf`, 4,6 Go | classifieur partagé par les deux onglets | 4/4 demandes, 0 fausse alerte, ~3 s à chaud sur le corpus | [0002](adr/0002-ollama-local-avec-gemma4-e2b.md) |
-| Sortie structurée | schéma JSON passé dans `response_format` (`json_schema`) | force `{"demande": bool, "citation": str}` | réponse analysable, citation vérifiée dans le courriel | [0004](adr/0004-classifieur-partage-et-citation-verifiee.md) |
+| Sortie structurée | schéma JSON par courriel passé dans `response_format` (`json_schema`, `oneOf`) | n'autorise que `{demande, type_demande, citation}` cohérents, citation choisie parmi les extraits du corps | réponse analysable, citation vérifiée dans le courriel | [0011](adr/0011-trois-intentions-et-contrat-de-reponse.md) |
 
 Paramètres d'appel : `temperature=0`, `reasoning_effort="none"` (pas de raisonnement préalable), `keep_alive: "30m"` (extension Ollama passée dans `extra_body`), délai de 180 s, aucune nouvelle tentative automatique. Modifiable par `OLLAMA_MODEL` et `OLLAMA_URL`.
 
