@@ -34,6 +34,12 @@ annulations et SAV. Renvoie du JSON avec demande (booléen) et citation (chaîne
 Pour une demande, recopie exactement un extrait du corps du message qui montre cette intention.
 Sinon utilise une chaîne vide."""
 
+# User message sent to the model. {objet} and {message} are replaced by the JSON-encoded subject
+# and body; the default renders exactly json.dumps({"objet": ..., "message": ...}).
+USER_TEMPLATE = '{"objet": {objet}, "message": {message}}'
+PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
+ALLOWED_PLACEHOLDERS = frozenset({"objet", "message"})
+
 SCHEMA = {
     "type": "object",
     "properties": {"demande": {"type": "boolean"}, "citation": {"type": "string"}},
@@ -60,6 +66,34 @@ class ServiceError(Exception):
 
 class AnalysisError(Exception):
     """One email could not be classified reliably and needs human review."""
+
+
+class PromptError(ServiceError):
+    """The edited prompts are unusable: nothing is sent to the model."""
+
+
+def check_prompts(system_prompt: str, user_template: str) -> None:
+    """Refuse an empty system prompt, a template without {message}, or any other placeholder."""
+    if not system_prompt.strip():
+        raise PromptError("Le prompt système est vide. Saisis un texte ou reviens aux prompts d’origine.")
+    names = set(PLACEHOLDER.findall(user_template))
+    if "message" not in names:
+        raise PromptError("Le message utilisateur doit contenir {message} (le corps du courriel).")
+    unknown = sorted(names - ALLOWED_PLACEHOLDERS)
+    if unknown:
+        raise PromptError(
+            f"Variable(s) non autorisée(s) dans le message utilisateur : {', '.join('{' + n + '}' for n in unknown)}. "
+            "Seuls {objet} et {message} sont remplacés."
+        )
+
+
+def render_user_message(user_template: str, subject: str, body: str) -> str:
+    """Fill {objet} and {message} in one pass, so text inside the email is never substituted again."""
+    values = {
+        "objet": json.dumps(subject, ensure_ascii=False),
+        "message": json.dumps(body[:BODY_MAX_CHARS], ensure_ascii=False),
+    }
+    return PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), user_template)
 
 
 def load_corpus(path: Path = ROOT / "messages.csv") -> list[Mail]:
@@ -95,20 +129,24 @@ def get_client() -> OpenAI:
     return OpenAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama", timeout=180, max_retries=0)
 
 
-def classify(subject: str, body: str, model: str) -> Verdict:
+def classify(
+    subject: str, body: str, model: str, system_prompt: str = PROMPT, user_template: str = USER_TEMPLATE
+) -> Verdict:
     """Classify one email with the local Ollama model. Shared by both tabs.
 
-    Only the subject and body are sent; identifiers and the answer key never are.
-    Raises ServiceError when Ollama is unusable, AnalysisError when this answer is unusable.
+    Only the subject and body are sent; identifiers and the answer key never are, whatever the prompts.
+    Raises ServiceError (PromptError for unusable prompts) when nothing can be classified,
+    AnalysisError when this answer is unusable.
     """
     model = model.strip()
     if not model:
         raise ServiceError("Aucun modèle indiqué. Saisis un nom affiché par `ollama list`.")
-    email = json.dumps({"objet": subject, "message": body[:BODY_MAX_CHARS]}, ensure_ascii=False)
+    check_prompts(system_prompt, user_template)
+    email = render_user_message(user_template, subject, body)
     try:
         completion = get_client().chat.completions.create(
             model=model,
-            messages=[{"role": "system", "content": PROMPT}, {"role": "user", "content": email}],
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": email}],
             temperature=0,
             reasoning_effort="none",
             response_format={"type": "json_schema", "json_schema": {"name": "verdict", "schema": SCHEMA}},

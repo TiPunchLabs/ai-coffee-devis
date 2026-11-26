@@ -18,9 +18,13 @@ from core import (
     DEFAULT_MODEL,
     EXPECTED,
     EXPECTED_LABELS,
+    PROMPT,
+    USER_TEMPLATE,
     AnalysisError,
     Mail,
+    PromptError,
     ServiceError,
+    check_prompts,
     classify,
     keyword_matches,
     load_corpus,
@@ -127,6 +131,54 @@ def select_js(detail_id: str) -> str:
         " if (window.matchMedia('(max-width: 767px)').matches) setTimeout(() =>"
         f"  document.getElementById('{detail_id}')?.scrollIntoView({{block: 'start'}}), 150);"
         "});"
+    )
+
+
+# ---------------------------------------------------------------- editable prompts
+
+
+def prompts_changed(system_prompt: str, user_template: str) -> bool:
+    """True when the session prompts differ from the validated project prompts."""
+    return system_prompt != PROMPT or user_template != USER_TEMPLATE
+
+
+def prompt_flag(system_prompt: str, user_template: str) -> str:
+    """Header badge shown while modified prompts are in use (text, not colour only)."""
+    if not prompts_changed(system_prompt, user_template):
+        return ""
+    return "<span class='q-badge q-badge--attention' role='status'>▲ Prompts modifiés</span>"
+
+
+def prompt_check(system_prompt: str, user_template: str) -> str:
+    """Validation note under the prompt editors."""
+    try:
+        check_prompts(system_prompt, user_template)
+    except PromptError as err:
+        return f"⛔ {err}"
+    if prompts_changed(system_prompt, user_template):
+        return "▲ Prompts modifiés, valides : ils s’appliqueront à la prochaine analyse (cette session seulement)."
+    return "✅ Prompts d’origine du projet."
+
+
+def reset_prompts() -> tuple[str, str]:
+    """Restore the exact project prompts."""
+    return PROMPT, USER_TEMPLATE
+
+
+def on_prompts_change(system_prompt: str, user_template: str, board: Board, selected: str | None) -> tuple:
+    """A prompt edit makes previous results stale: clear score, answer key and statuses."""
+    board = copy.deepcopy(EMPTY_BOARD) | {"keyword": board["keyword"]}
+    if prompts_changed(system_prompt, user_template):
+        status = "▲ **Prompts modifiés** : l’ancien score est effacé. Relance l’analyse pour voir leur effet."
+    else:
+        status = "Prompts d’origine rétablis : l’ancien score est effacé. Relance l’analyse."
+    return (
+        prompt_flag(system_prompt, user_template),
+        prompt_check(system_prompt, user_template),
+        status,
+        None,
+        panel(""),
+        *views(board, selected),
     )
 
 
@@ -243,12 +295,26 @@ def search_keyword(board: Board, selected: str | None) -> tuple[Board, str, str]
     return views(board, selected)
 
 
-def run_analysis(model: str, board: Board, selected: str | None) -> Iterator[tuple]:
+def run_analysis(
+    model: str, system_prompt: str, user_template: str, board: Board, selected: str | None
+) -> Iterator[tuple]:
     """Classify the 20 prepared emails one by one, streaming progress.
 
     Yields (status, completed run or None, cleared answer-key panel, board, queue, detail).
     The run is only stored once all 20 emails have been processed.
+    Unusable prompts stop everything before any call to the model.
     """
+    try:
+        check_prompts(system_prompt, user_template)
+    except PromptError as err:
+        yield (
+            f"⛔ **Analyse impossible** : {err} Aucun message n’a été envoyé au modèle.",
+            None,
+            panel(""),
+            *views(board, selected),
+        )
+        return
+    custom = prompts_changed(system_prompt, user_template)
     board = copy.deepcopy(EMPTY_BOARD) | {"keyword": board["keyword"], "progress": "analyse en cours"}
     results = board["results"]
     found: set[str] = set()
@@ -262,7 +328,7 @@ def run_analysis(model: str, board: Board, selected: str | None) -> Iterator[tup
     )
     for index, mail in enumerate(MAILS, 1):
         try:
-            verdict = classify(mail.subject, mail.body, model)
+            verdict = classify(mail.subject, mail.body, model, system_prompt, user_template)
         except ServiceError as err:
             message = (
                 f"⛔ **Analyse interrompue au message {mail.id}** ({index - 1}/{len(MAILS)} traités). "
@@ -287,7 +353,15 @@ def run_analysis(model: str, board: Board, selected: str | None) -> Iterator[tup
     )
     if errors:
         status += f" ⚠️ {len(errors)} message(s) à vérifier : {', '.join(sorted(errors))}."
-    run = {"model": model.strip(), "seconds": round(elapsed), "found": sorted(found), "errors": errors}
+    if custom:
+        status += " ▲ Obtenu avec des **prompts modifiés**."
+    run = {
+        "model": model.strip(),
+        "seconds": round(elapsed),
+        "found": sorted(found),
+        "errors": errors,
+        "custom_prompts": custom,
+    }
     board["progress"] = None
     yield status, run, panel(""), *views(board, selected)
 
@@ -324,7 +398,8 @@ def reveal(run: Run) -> str:
         score_row("Mot « devis »", keyword_ids),
     ]
     if run:
-        lines.append(score_row(f"Modèle local `{run['model']}` ({run['seconds']} s)", set(run["found"])))
+        custom = " · prompts modifiés" if run.get("custom_prompts") else ""
+        lines.append(score_row(f"Modèle local `{run['model']}` ({run['seconds']} s{custom})", set(run["found"])))
     lines.append("")
     kw = score(keyword_ids)
     lines.append(
@@ -340,6 +415,8 @@ def reveal(run: Run) -> str:
             lines.append(
                 f"\n⚠️ Non classés (erreur d’analyse, comptés comme non retenus) : {describe(sorted(run['errors']))}"
             )
+        if run.get("custom_prompts"):
+            lines.append("\n▲ **Score obtenu avec des prompts modifiés** (Paramètres), pas avec les prompts d’origine.")
     else:
         lines.append("\n**Modèle local** · pas d’analyse complète : lance l’étape 2 jusqu’au bout.")
     return "\n".join(lines)
@@ -453,7 +530,9 @@ def select_live(verdicts: dict, evt: gr.EventData) -> tuple[str | None, str, gr.
     return selected, show_message(selected, verdicts), gr.Button(visible=selected is not None), ""
 
 
-def analyze_live(message_id: str | None, model: str, verdicts: dict) -> tuple[str, dict, str, str]:
+def analyze_live(
+    message_id: str | None, model: str, system_prompt: str, user_template: str, verdicts: dict
+) -> tuple[str, dict, str, str]:
     """Run the shared classifier on one live message. Returns (status, verdicts, queue, detail)."""
     mail = MAILBOX.messages.get(message_id or "")
     if not mail:
@@ -467,7 +546,7 @@ def analyze_live(message_id: str | None, model: str, verdicts: dict) -> tuple[st
     verdicts = dict(verdicts)
     start = time.monotonic()
     try:
-        verdict = classify(mail.subject, mail.body, model)
+        verdict = classify(mail.subject, mail.body, model, system_prompt, user_template)
     except ServiceError as err:
         return f"⛔ {err}", verdicts, live_queue(verdicts, message_id), show_message(message_id, verdicts)
     except AnalysisError as err:
@@ -476,6 +555,8 @@ def analyze_live(message_id: str | None, model: str, verdicts: dict) -> tuple[st
     else:
         seconds = time.monotonic() - start
         info = f"Modèle {model.strip()}, {seconds:.1f} s."
+        if prompts_changed(system_prompt, user_template):
+            info += " Prompts modifiés."
         if verdict.is_request:
             verdicts[mail.message_id] = {"state": "request", "quote": verdict.quote, "info": info}
             status = f"✅ Nouvelle demande de location → à rappeler · {info}"
@@ -490,6 +571,14 @@ def analyze_live(message_id: str | None, model: str, verdicts: dict) -> tuple[st
 CSS = """
 .gradio-container { max-width: 1320px !important; }
 #app-header { align-items: flex-end; gap: 16px; }
+#header-actions { align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: nowrap; }
+#header-actions > * { flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; }
+#prompt-flag:empty { display: none; }
+.q-settings-title { font-size: 1.15rem; font-weight: 650; margin: 0 0 4px; }
+.q-settings-note { font-size: 0.85rem; color: var(--body-text-color-subdued); }
+#settings input:focus-visible, #settings textarea:focus-visible, #settings button:focus-visible,
+#settings-btn:focus-visible { outline: 2px solid var(--color-accent) !important; outline-offset: 2px; }
+#system-prompt textarea, #user-template textarea { font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.45; }
 #app-title h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
 #app-title p { margin: 2px 0 0; color: var(--body-text-color-subdued); font-size: 0.95rem; }
 .toolbar { gap: 8px; flex-wrap: wrap; }
@@ -570,7 +659,6 @@ mark.q-quote { background: var(--q-amber-bg); color: inherit; box-shadow: inset 
   .toolbar button { width: 100%; white-space: normal; font-size: 0.9rem; padding: 8px 10px; }
   .tab-wrapper button { padding-left: 8px !important; padding-right: 8px !important; font-size: 0.9rem !important; }
   .gradio-container { padding-left: 12px !important; padding-right: 12px !important; }
-  #model-col { flex: 1 1 100% !important; }
   #prep-queue, #live-queue { max-height: 46vh; }
   #prep-detail, #live-detail { padding: 14px; }
   .q-back { display: inline-block; }
@@ -612,13 +700,44 @@ def build():
                     elem_id="app-title",
                     js_on_load=None,
                 )
-            with gr.Column(scale=0, min_width=260, elem_id="model-col"):
-                model = gr.Textbox(
-                    label="Modèle local (Ollama)",
-                    info="Nom affiché par `ollama list`",
-                    value=DEFAULT_MODEL,
-                    elem_id="model-box",
+            with gr.Row(elem_id="header-actions", scale=0):
+                flag = gr.HTML("", elem_id="prompt-flag", js_on_load=None)
+                settings_btn = gr.Button("⚙ Paramètres", variant="secondary", size="sm", elem_id="settings-btn")
+
+        with gr.Sidebar(label="Paramètres", open=False, position="right", width=440, elem_id="settings") as settings:
+            gr.HTML("<h2 class='q-settings-title'>Paramètres</h2>", js_on_load=None)
+            model = gr.Textbox(
+                label="Modèle local (Ollama)",
+                info="Nom affiché par `ollama list`",
+                value=DEFAULT_MODEL,
+                elem_id="model-box",
+            )
+            show_prompts = gr.Checkbox(label="Afficher et modifier les prompts", value=False, elem_id="show-prompts")
+            with gr.Group(visible=False, elem_id="prompt-editor") as prompt_editor:
+                system_box = gr.Textbox(
+                    label="Prompt système",
+                    info="Consignes envoyées au modèle avant chaque courriel.",
+                    value=PROMPT,
+                    lines=10,
+                    max_lines=24,
+                    elem_id="system-prompt",
                 )
+                template_box = gr.Textbox(
+                    label="Message utilisateur (gabarit)",
+                    info="{objet} et {message} sont remplacés par l’objet et le corps du courriel, encodés en JSON. "
+                    "Aucune autre variable n’est acceptée.",
+                    value=USER_TEMPLATE,
+                    lines=3,
+                    max_lines=10,
+                    elem_id="user-template",
+                )
+                reset_btn = gr.Button("Revenir aux prompts d’origine", variant="secondary", size="sm")
+                check_note = gr.Markdown(prompt_check(PROMPT, USER_TEMPLATE), elem_id="prompt-check")
+            gr.Markdown(
+                "Les prompts modifiés valent pour cette fenêtre du navigateur seulement ; "
+                "rien n’est enregistré. Un rechargement de la page rétablit les prompts d’origine.",
+                elem_classes="q-settings-note",
+            )
 
         with gr.Tab("Démo préparée"):
             board = gr.State(copy.deepcopy(EMPTY_BOARD))
@@ -642,7 +761,9 @@ def build():
             panes = [board, queue, detail]
             queue.select(select_prepared, board, [selected, detail])
             keyword_btn.click(search_keyword, [board, selected], panes)
-            run_evt = run_btn.click(run_analysis, [model, board, selected], [status, run_state, summary, *panes])
+            run_evt = run_btn.click(
+                run_analysis, [model, system_box, template_box, board, selected], [status, run_state, summary, *panes]
+            )
             stop_btn.click(stop_analysis, [board, selected], [status, run_state, summary, *panes], cancels=[run_evt])
             reveal_btn.click(reveal_click, [run_state, board, selected], [summary, *panes])
 
@@ -676,7 +797,20 @@ def build():
             )
             live_list.select(select_live, verdicts, [live_selected, live_detail, analyze_btn, live_status])
             analyze_btn.click(
-                analyze_live, [live_selected, model, verdicts], [live_status, verdicts, live_list, live_detail]
+                analyze_live,
+                [live_selected, model, system_box, template_box, verdicts],
+                [live_status, verdicts, live_list, live_detail],
+            )
+
+        settings_btn.click(lambda: gr.Sidebar(open=True), outputs=settings)
+        show_prompts.change(lambda show: gr.Group(visible=show), show_prompts, prompt_editor)
+        reset_btn.click(reset_prompts, outputs=[system_box, template_box])
+        for box in (system_box, template_box):
+            box.change(
+                on_prompts_change,
+                [system_box, template_box, board, selected],
+                [flag, check_note, status, run_state, summary, *panes],
+                trigger_mode="always_last",
             )
     return demo
 
